@@ -2,6 +2,9 @@
 
 Turns a table of dated events into a side-scrolling timeline.
 
+**[Open the live test view](https://landstr0m.github.io/timeline-visualiser/web/)**
+(web version, sample data; anything you enter stays in your own browser).
+
 - **Single-date events** have a bold class, a date and a short description,
   joined to their date by a line coloured by class.
 - **Bands** are events with a start *and* an end date. They run as horizontal
@@ -18,9 +21,10 @@ Turns a table of dated events into a side-scrolling timeline.
 | **Web** | `web/index.html` | Open the file in a browser, host it, or embed it: `<iframe src="index.html" width="100%" height="800"></iframe>`. One file, no libraries, no network access |
 | **Windows exe** | built from the Python version | Download `TimelineVisualiser.exe` from the repo's *Actions* tab (latest *Build Windows exe* run > Artifacts) and double-click. No Python needed. Close the console window to stop it |
 
-The web version can also be served by GitHub Pages: set the repo's *Settings > Pages >
-Source* to "GitHub Actions" once, and `.github/workflows/pages.yml` publishes the
-`web` folder on every change. A Pages site is public to anyone with the link.
+The web version is also served by GitHub Pages (*Settings > Pages*, deploy from
+branch `main`, root folder) at
+https://landstr0m.github.io/timeline-visualiser/web/ and updates on every push.
+A Pages site is public to anyone with the link.
 
 To build the exe yourself on Windows:
 
@@ -88,5 +92,4 @@ date,end,class,description
 | `docs/DESIGN.md` | Requirements, design decisions, known limits |
 | `CLAUDE.md` | Project notes and standards for AI-assisted work |
 | `.github/workflows/build-exe.yml` | Builds the Windows exe |
-| `.github/workflows/pages.yml` | Publishes the web version to GitHub Pages |
 | `sample_events.csv` | Made-up example data and CSV template |
