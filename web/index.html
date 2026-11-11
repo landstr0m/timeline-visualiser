@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timeline Visualiser</title>
+<!-- Timeline Visualiser - web version. One self-contained file, no libraries, no network.
+     Open it directly, host it, or embed it:  <iframe src="index.html" width="100%" height="800"></iframe>
+     Mirrors the Python version (timeline.py / app.py); keep the two in step. -->
+<style>
+  body { font-family: "Segoe UI", Helvetica, Arial, sans-serif; color: #1a1a19; margin: 0; padding: 12px; background: #fff; }
+  h2 { margin: 0 0 4px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; }
+  button, .btn, input[type=text] { padding: 6px 10px; border: 1px solid #c9c8c0; border-radius: 6px; background: #fff; font: inherit; font-size: 14px; }
+  button, .btn { cursor: pointer; }
+  #capture { font-weight: 600; margin-left: 10px; }
+  #svg { display: block; touch-action: none; cursor: grab; user-select: none; }
+  .muted { color: #6b6a62; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #dddcd5; padding: 3px; text-align: left; }
+  th { background: #f3f2ee; padding: 6px; font-size: 14px; }
+  td input { width: 100%; box-sizing: border-box; border: 0; padding: 5px; font: inherit; font-size: 14px; background: transparent; }
+  td input.cls { font-weight: 600; }
+  td.del { width: 28px; text-align: center; }
+  td.del button { border: 0; padding: 2px 6px; }
+  textarea { width: 100%; height: 110px; box-sizing: border-box; margin: 6px 0; }
+</style>
+</head>
+<body>
+<h2>Timeline Visualiser</h2>
+<div class="bar">
+  <input type="text" id="title" placeholder="Timeline title (optional)" style="width:260px">
+  <label><input type="checkbox" id="showTl" checked> Timeline</label>
+  <label><input type="checkbox" id="showTb" checked> Table</label>
+</div>
+<div class="bar">
+  <button id="prev" title="Earlier">◀</button><button id="next" title="Later">▶</button>
+  <button id="today">Today</button><button id="first">First event</button>
+  <span style="margin-left:10px">Zoom:</span>
+  <button data-zoom="7">1 week</button><button data-zoom="14">2 weeks</button><button data-zoom="31">1 month</button>
+  <button data-zoom="92">3 months</button><button data-zoom="184">6 months</button>
+  <button id="capture">Capture PNG</button>
+</div>
+<div id="tl"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+<div id="caption" class="muted" style="margin:6px 0"></div>
+<div id="tb">
+  <div class="bar">
+    <button id="add">Add row</button>
+    <label class="btn">Load CSV<input type="file" id="file" accept=".csv,.tsv,.txt" hidden></label>
+    <button id="save">Download CSV</button>
+    <button id="clear">Clear all</button>
+    <span id="status" class="muted"></span>
+  </div>
+  <table>
+    <thead><tr><th></th><th style="width:140px">Start</th><th style="width:140px">End (optional)</th><th style="width:170px">Class</th><th>Description</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <details style="margin-top:10px">
+    <summary>Paste rows from Excel or CSV</summary>
+    <textarea id="paste" placeholder="date, class, description  or  start, end, class, description - one per line (tab or comma separated)"></textarea>
+    <button id="pasteAdd">Add pasted rows</button>
+  </details>
+</div>
+
+<script>
+"use strict";
+// ------------------------------------------------------------ constants ----
+const DAY = 864e5, MIN_DAYS = 7, MAX_DAYS = 184;
+const PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
+const OTHER = "#8a897f", INK = "#1a1a19", MUTED = "#6b6a62", GRID = "#e6e5df";
+const FONT = '"Segoe UI", Helvetica, Arial, sans-serif';
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const LEVELS = [[34, 2], [24, 1], [0, 0]];   // label detail: [wrap width, description lines]
+const LINE_PX = 16, LANE_GAP = 10, MAX_LANES = 5, BAND_PX = 28;
+const ALIASES = { date: "date", day: "date", when: "date", start: "date", "start date": "date", from: "date",
+  end: "end", "end date": "end", finish: "end", to: "end", until: "end",
+  class: "class", title: "class", type: "class", category: "class",
+  description: "description", desc: "description", details: "description", text: "description",
+  activity: "activity", event: "activity" };
+const SAMPLE = `date,end,class,description
+2026-11-03,2026-11-27,Phase,Investigation
+2026-11-03,,Decision,Review board confirms scope of investigation
+2026-11-06,2026-11-12,Hold,Equipment on hold
+2026-11-06,,Results,Buffer recirculation data expected
+2026-11-06,,Review,Draft report circulated
+2026-11-10,,Results,Post-cleaning samples expected
+2026-11-12,,Approval,Updated protocols
+2026-11-12,,Approval,Associated validation documents
+2026-11-13,2026-12-18,Phase,Production campaign
+2026-11-13,,Production,Batch 3 filtration
+2026-11-13,,Production,Batch 4 harvest
+2026-11-16,,Production,Batch 4 capture step
+2026-11-20,,Results,Water loop sampling data
+2026-11-27,,Decision,Review board closes investigation
+2026-12-04,,Review,Lessons-learned session
+2026-12-15,,Approval,Final report`;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// Local storage can be blocked (e.g. sandboxed iframes): fall back to memory only.
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("tv_" + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem("tv_" + k, JSON.stringify(v)); } catch (e) { /* not persisted */ } },
+};
+
+// ----------------------------------------------------------------- data ----
+// Dates are whole-day numbers (days since 1970, UTC) so time zones never shift them.
+const iso = n => new Date(n * DAY).toISOString().slice(0, 10);
+const num = s => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)) / DAY;
+const todayNum = () => { const t = new Date(); return Date.UTC(t.getFullYear(), t.getMonth(), t.getDate()) / DAY; };
+const fmt = n => { const t = new Date(n * DAY); return `${String(t.getUTCDate()).padStart(2, "0")} ${MON[t.getUTCMonth()]} ${t.getUTCFullYear()}`; };
+
+function parseDate(value) {   // returns a day number or null
+  const s = String(value ?? "").trim();
+  const year = y => y == null ? new Date().getFullYear() : (+y < 100 ? 2000 + +y : +y);
+  const make = (y, m, d) => { const n = Date.UTC(y, m - 1, d) / DAY, t = new Date(n * DAY);
+    return t.getUTCMonth() === m - 1 && t.getUTCDate() === d ? n : null; };
+  let m;
+  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return make(+m[1], +m[2], +m[3]);
+  if ((m = s.match(/^(\d{1,2})[./](\d{1,2})[./]?(\d{2,4})?$/))) return make(year(m[3]), +m[2], +m[1]);
+  if ((m = s.match(/^(\d{1,2})[- ]?([A-Za-z]{3,})[- ]?(\d{2,4})?$/))) {
+    const i = MON.findIndex(x => x.toLowerCase() === m[2].slice(0, 3).toLowerCase());
+    if (i >= 0) return make(year(m[3]), i + 1, +m[1]);
+  }
+  return null;
+}
+
+function makeRow(day, cls, description, id, end) {
+  if (end != null && end < day) [day, end] = [end, day];
+  return { id: id || Math.random().toString(36).slice(2, 12), date: iso(day), end: end != null && end !== day ? iso(end) : "",
+    class: String(cls || "").trim().replace(/:\s*$/, "").trim(), description: String(description || "").trim() };
+}
+const sortKey = r => [r.date, r.end || "", r.class.toLowerCase(), r.description.toLowerCase()].join("\u0001");
+const sortRows = rs => rs.slice().sort((a, b) => sortKey(a) < sortKey(b) ? -1 : sortKey(a) > sortKey(b) ? 1 : 0);
+
+function parseCSV(text) {   // handles quoted cells; separator is tab, semicolon or comma
+  const count = c => text.split(c).length;
+  const sep = text.includes("\t") ? "\t" : count(";") > count(",") ? ";" : ",";
+  const out = []; let row = [], cell = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) { if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else quoted = false; } else cell += c; }
+    else if (c === '"') quoted = true;
+    else if (c === sep) { row.push(cell); cell = ""; }
+    else if (c === "\n") { row.push(cell); out.push(row); row = []; cell = ""; }
+    else if (c !== "\r") cell += c;
+  }
+  row.push(cell); out.push(row);
+  return out.filter(r => r.some(c => c.trim()));
+}
+
+function rowsFromText(text) {   // returns { rows, bad }
+  const table = parseCSV(text.replace(/^﻿/, ""));
+  if (!table.length) return { rows: [], bad: 0 };
+  let names;
+  if (parseDate(table[0][0]) === null) names = table.shift().map((c, i) => ALIASES[c.trim().toLowerCase()] || "_" + i);
+  else names = { 2: ["date", "activity"], 3: ["date", "class", "description"] }[table[0].length] || ["date", "end", "class", "description"];
+  const rows = []; let bad = 0;
+  for (const cells of table) {
+    const rec = {}; names.forEach((n, i) => rec[n] = (cells[i] || "").trim());
+    const day = parseDate(rec.date); let cls = rec.class || "", desc = rec.description || "";
+    if (rec.activity && !cls) { const i = rec.activity.indexOf(":");
+      [cls, desc] = i >= 0 ? [rec.activity.slice(0, i), rec.activity.slice(i + 1)] : ["", rec.activity]; }
+    if (day === null || !(cls.trim() || desc.trim())) { bad++; continue; }
+    rows.push(makeRow(day, cls, desc, null, parseDate(rec.end)));
+  }
+  return { rows: sortRows(rows), bad };
+}
+
+function toCSV(rs) {
+  const q = s => /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  return ["date,end,class,description", ...sortRows(rs).map(r => [r.date, r.end || "", r.class, r.description].map(q).join(","))].join("\n") + "\n";
+}
+
+function classColours(rs) {   // colour follows the class name, not what is on screen
+  const names = [...new Set(rs.map(r => r.class).filter(Boolean))].sort((a, b) => a.toLowerCase() < b.toLowerCase() ? -1 : 1);
+  return Object.fromEntries(names.map((c, i) => [c, i < PALETTE.length ? PALETTE[i] : OTHER]));
+}
+const inView = (rs, lo, hi) => rs.filter(r => num(r.date) <= hi && num(r.end || r.date) >= lo);
+
+// ---------------------------------------------------------------- state ----
+let rows = store.get("rows", null);
+if (rows === null) rows = rowsFromText(SAMPLE).rows;   // sample only until the user has data
+let view = store.get("view", null);                    // { start: day number (fractional), span: days }
+if (!view) {   // one month: the current month if it has events, else the first event's month
+  let t = todayNum();
+  if (rows.length && !rows.some(r => r.date.slice(0, 7) === iso(t).slice(0, 7))) t = num(rows[0].date);
+  view = { start: num(iso(t).slice(0, 8) + "01"), span: 31 };
+}
+$("title").value = store.get("title", "");
+const save = () => { store.set("rows", rows); store.set("view", view); store.set("title", $("title").value); };
+const say = msg => $("status").textContent = msg;
+
+// --------------------------------------------------------------- layout ----
+const ctx = document.createElement("canvas").getContext("2d");
+const textW = (s, bold) => { ctx.font = `${bold ? 600 : 400} 12px ${FONT}`; return ctx.measureText(s).width; };
+
+function wrap(text, width, maxLines) {
+  const lines = []; let line = "";
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (line && (line + " " + word).length > width) { lines.push(line); line = word; } else line = line ? line + " " + word : word;
+  }
+  if (line) lines.push(line);
+  if (lines.length > maxLines) { lines.length = maxLines; lines[maxLines - 1] = lines[maxLines - 1].slice(0, width - 1) + "…"; }
+  return lines;
+}
+
+// Single-date events: each label takes the lowest lane whose previous label has ended.
+// If that needs more than MAX_LANES lanes, shorten the text and try again.
+function layoutLabels(rs, ppd, showDate) {
+  let placed = [];
+  for (const [width, maxLines] of LEVELS) {
+    placed = []; const laneEnd = [];
+    for (const r of sortRows(rs)) {
+      const x = num(r.date), t = new Date(x * DAY);
+      const head = (r.class || "Event") + (showDate ? ` · ${String(t.getUTCDate()).padStart(2, "0")} ${MON[t.getUTCMonth()]}` : "");
+      const lines = [head, ...(width && r.description ? wrap(r.description, width, maxLines) : [])];
+      const px = Math.max(...lines.map((s, i) => textW(s, i === 0))) + 16;
+      let lane = laneEnd.findIndex(e => e <= x); if (lane < 0) lane = laneEnd.length;
+      laneEnd[lane] = x + px / ppd;
+      placed.push({ ...r, lines, lane: lane + 1, x, px });
+    }
+    if (laneEnd.length <= MAX_LANES) break;
+  }
+  return placed;
+}
+
+// Bands: label at the band's start, or at the left edge of the view if it started earlier.
+function layoutBands(rs, ppd, viewStart) {
+  const placed = [], laneEnd = [];
+  for (const r of sortRows(rs)) {
+    const x0 = num(r.date), x1 = num(r.end), labelX = Math.min(Math.max(x0, viewStart), x1);
+    const px = textW(r.class || "Event", true) + textW("  " + r.description, false) + 16;
+    let lane = laneEnd.findIndex(e => e <= x0); if (lane < 0) lane = laneEnd.length;
+    laneEnd[lane] = Math.max(x1, labelX + px / ppd);
+    placed.push({ ...r, lane: lane + 1, x0, x1, labelX });
+  }
+  return placed;
+}
+
+// ----------------------------------------------------------------- draw ----
+function draw() {
+  const W = Math.max($("tl").clientWidth, 300), title = $("title").value.trim();
+  const L = 30, R = 30, pw = W - L - R, ppd = pw / view.span, daily = ppd >= 22;
+  const lo = view.start, hi = view.start + view.span, X = d => L + (d - lo) * ppd;
+  const colours = classColours(rows), col = c => colours[c] || OTHER;
+  const shown = inView(rows.filter(r => r.class || r.description), Math.ceil(lo), Math.floor(hi));
+  const labels = layoutLabels(shown.filter(r => !r.end), ppd, !daily);
+  const bands = layoutBands(shown.filter(r => r.end), ppd, lo);
+
+  // legend rows (single-date classes), wrapped to the width
+  const legend = [...new Set(labels.map(p => p.class || "Event"))].sort();
+  const legRows = [[]]; let legW = 0;
+  if (legend.length > 1) for (const name of legend) {
+    const w = textW(name, false) + 34;
+    if (legW + w > pw && legRows[legRows.length - 1].length) { legRows.push([]); legW = 0; }
+    legRows[legRows.length - 1].push({ name, w }); legW += w;
+  }
+  const legH = legend.length > 1 ? legRows.length * 18 + 6 : 0;
+
+  const nLines = Math.max(1, ...labels.map(p => p.lines.length)), lanePx = nLines * LINE_PX + LANE_GAP;
+  const pointsH = 24 + Math.max(0, ...labels.map(p => p.lane)) * lanePx;
+  const bandsH = bands.length ? 10 + Math.max(...bands.map(b => b.lane)) * BAND_PX : 0;
+  const top = (title ? 40 : 10) + legH, yAxis = top + bandsH + pointsH, H = yAxis + 46;
+  const o = [`<rect width="${W}" height="${H}" fill="#fff"/>`];
+  const text = (x, y, s, extra = "") => `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-family='${FONT}' font-size="12" fill="${INK}" ${extra}>${s}</text>`;
+  if (title) o.push(text(L, 28, esc(title), 'font-size="20" style="font-size:20px"'));
+  legRows.forEach((row, i) => { let x = W - R - row.reduce((a, b) => a + b.w, 0);
+    for (const it of row) { const y = (title ? 40 : 10) + i * 18 + 10;
+      o.push(`<line x1="${x}" x2="${x + 18}" y1="${y}" y2="${y}" stroke="${col(it.name)}" stroke-width="2"/><circle cx="${x + 9}" cy="${y}" r="3.5" fill="${col(it.name)}"/>`,
+        text(x + 23, y + 4, esc(it.name), `fill="${MUTED}" style="fill:${MUTED}"`)); x += it.w; } });
+
+  // weekends, ticks and grid
+  let first = true;
+  for (let d = Math.floor(lo) - 1; d <= Math.ceil(hi); d++) {
+    const t = new Date(d * DAY), dom = t.getUTCDate(), dow = t.getUTCDay(), mo = t.getUTCMonth(), yr = t.getUTCFullYear(), x = X(d);
+    if (dow === 6 && ppd >= 8) { const a = Math.max(X(d - 0.5), L), b = Math.min(X(d + 1.5), W - R);
+      if (b > a) o.push(`<rect x="${a}" y="${top}" width="${b - a}" height="${yAxis - top}" fill="#f6f5f1"/>`); }
+    if (x < L - 0.5 || x > W - R + 0.5) continue;
+    let l1 = null, l2 = "";
+    if (daily) { l1 = (ppd >= 48 ? DOW[dow] + " " : "") + String(dom).padStart(2, "0"); if (first || dom === 1) l2 = `${MON[mo]} ${yr}`; }
+    else if (ppd * 7 >= 50) { if (dow === 1) { l1 = `${String(dom).padStart(2, "0")} ${MON[mo]}`; if (first || (mo === 0 && dom <= 7)) l2 = yr; } }
+    else if (dom === 1) { l1 = MON[mo]; if (first || mo === 0) l2 = yr; }
+    if (l1 === null) continue;
+    first = false;
+    if (!daily) o.push(`<line x1="${x}" x2="${x}" y1="${top}" y2="${yAxis}" stroke="${GRID}"/>`);
+    o.push(`<line x1="${x}" x2="${x}" y1="${yAxis}" y2="${yAxis + 5}" stroke="${MUTED}"/>`,
+      text(x, yAxis + 19, l1, `text-anchor="middle" fill="${MUTED}" style="fill:${MUTED}"`),
+      l2 ? text(x, yAxis + 35, l2, `text-anchor="middle" fill="${MUTED}" style="fill:${MUTED}"`) : "");
+  }
+
+  // bands (their own strip above the single-date labels)
+  for (const b of bands) {
+    const x0 = Math.max(X(b.x0), L), x1 = Math.min(X(b.x1), W - R), y = yAxis - pointsH - 10 - b.lane * BAND_PX + 6;
+    if (x1 <= x0) continue;
+    const tip = `<title>${esc(`${fmt(b.x0)} – ${fmt(b.x1)}\n${b.class || "Event"}\n${b.description}`)}</title>`;
+    o.push(`<rect x="${x0}" y="${y}" width="${x1 - x0}" height="${BAND_PX - 6}" rx="4" fill="${col(b.class)}" fill-opacity="0.3" stroke="${col(b.class)}" stroke-opacity="0.6">${tip}</rect>`,
+      text(Math.max(X(b.labelX), L) + 6, y + 15, `<tspan font-weight="600">${esc(b.class || "Event")}</tspan>  ${esc(b.description)}${tip}`, 'xml:space="preserve"'));
+  }
+
+  // single-date events: lines first, then labels on white so lines pass behind them
+  const pts = labels.filter(p => X(p.x) >= L - 0.5 && X(p.x) <= W - R + 0.5);
+  const boxY = p => yAxis - 24 - (p.lane - 1) * lanePx - p.lines.length * LINE_PX;
+  for (const p of pts) o.push(`<line x1="${X(p.x)}" x2="${X(p.x)}" y1="${yAxis}" y2="${boxY(p) - 2}" stroke="${col(p.class)}" stroke-width="2"/>`);
+  for (const p of pts) {
+    const x = X(p.x), y = boxY(p), tip = `<title>${esc(`${DOW[new Date(p.x * DAY).getUTCDay()]} ${fmt(p.x)}\n${p.class || "Event"}\n${p.description}`)}</title>`;
+    o.push(`<rect x="${x + 2}" y="${y - 2}" width="${p.px - 4}" height="${p.lines.length * LINE_PX + 4}" fill="#fff" fill-opacity="0.92">${tip}</rect>`);
+    p.lines.forEach((s, i) => o.push(text(x + 7, y + 12 + i * LINE_PX, esc(s) + tip, i === 0 ? 'font-weight="600"' : "")));
+  }
+  o.push(`<line x1="${L}" x2="${W - R}" y1="${yAxis}" y2="${yAxis}" stroke="${MUTED}"/>`);
+  for (const p of pts) o.push(`<circle cx="${X(p.x)}" cy="${yAxis}" r="4" fill="${col(p.class)}" stroke="#fff" stroke-width="2"/>`);
+
+  const svg = $("svg");
+  svg.setAttribute("width", W); svg.setAttribute("height", H); svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML = o.join("");
+  svg._ppd = ppd; svg._left = L;
+  const visible = inView(rows, Math.floor(lo), Math.floor(hi));
+  $("caption").textContent = `Showing ${fmt(Math.floor(lo))} – ${fmt(Math.floor(hi))} · ${visible.length} of ${rows.length} events`;
+  return visible;
+}
+
+function drawTable(visible) {
+  const cell = (r, k, type, cls = "") => `<td><input type="${type}" class="${cls}" data-k="${k}" value="${esc(r[k] || "")}"></td>`;
+  $("rows").innerHTML = visible.map(r => `<tr data-id="${r.id}"><td class="del"><button title="Delete">×</button></td>` +
+    cell(r, "date", "date") + cell(r, "end", "date") + cell(r, "class", "text", "cls") + cell(r, "description", "text") + "</tr>").join("");
+}
+function render() {   // the only place that redraws: timeline and table can never disagree
+  rows = sortRows(rows); save();
+  $("tl").style.display = $("showTl").checked ? "" : "none";
+  $("tb").style.display = $("showTb").checked ? "" : "none";
+  drawTable(draw());
+}
+
+// ------------------------------------------------------------- controls ----
+function setView(start, span) {   // keep the span between one week and six months, same centre
+  const clamped = Math.min(Math.max(span, MIN_DAYS), MAX_DAYS);
+  view = { start: start + (span - clamped) / 2, span: clamped };
+}
+$("prev").onclick = () => { setView(view.start - view.span / 2, view.span); render(); };
+$("next").onclick = () => { setView(view.start + view.span / 2, view.span); render(); };
+$("today").onclick = () => { setView(todayNum() + 0.5 - view.span / 2, view.span); render(); };
+$("first").onclick = () => { if (rows.length) { setView(num(rows[0].date) - 1, view.span); render(); } };
+document.querySelectorAll("[data-zoom]").forEach(b => b.onclick = () => {
+  const span = +b.dataset.zoom; setView(view.start + view.span / 2 - span / 2, span); render(); });
+["title", "showTl", "showTb"].forEach(id => $(id).addEventListener("input", render));
+
+// drag to scroll; wheel zooms at the pointer; shift+wheel or sideways wheel scrolls
+const svg = $("svg"); let drag = null, queued = false;
+const redrawSoon = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; draw(); }); } };
+svg.addEventListener("pointerdown", e => { drag = { x: e.clientX, start: view.start }; svg.setPointerCapture(e.pointerId); svg.style.cursor = "grabbing"; });
+svg.addEventListener("pointermove", e => { if (drag) { view.start = drag.start - (e.clientX - drag.x) / svg._ppd; redrawSoon(); } });
+const endDrag = () => { if (drag) { drag = null; svg.style.cursor = "grab"; render(); } };
+svg.addEventListener("pointerup", endDrag); svg.addEventListener("pointercancel", endDrag);
+let wheelTimer;
+svg.addEventListener("wheel", e => {
+  e.preventDefault();
+  if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) view.start += (e.deltaX || e.deltaY) / svg._ppd;
+  else {
+    const at = view.start + (e.clientX - svg.getBoundingClientRect().left - svg._left) / svg._ppd;
+    const span = Math.min(Math.max(view.span * Math.exp(e.deltaY * 0.0015), MIN_DAYS), MAX_DAYS);
+    view = { start: at - (at - view.start) * span / view.span, span };
+  }
+  redrawSoon(); clearTimeout(wheelTimer); wheelTimer = setTimeout(render, 200);
+}, { passive: false });
+new ResizeObserver(redrawSoon).observe($("tl"));
+
+// table edits
+$("rows").addEventListener("change", e => {
+  const id = e.target.closest("tr").dataset.id, old = rows.find(r => r.id === id), k = e.target.dataset.k;
+  const next = { ...old, [k]: e.target.value };
+  const day = parseDate(next.date);
+  if (day === null) say("A start date is needed - kept the previous date.");
+  else { rows = rows.map(r => r.id === id ? makeRow(day, next.class, next.description, id, parseDate(next.end)) : r); say(""); }
+  render();
+});
+$("rows").addEventListener("click", e => {
+  if (e.target.tagName === "BUTTON") { rows = rows.filter(r => r.id !== e.target.closest("tr").dataset.id); render(); } });
+$("add").onclick = () => { rows.push(makeRow(Math.floor(view.start + view.span / 2), "", "")); say("Blank row added at the middle of the visible range."); render(); };
+$("clear").onclick = () => { rows = []; say("All events cleared."); render(); };
+
+function addRows(text) {
+  const { rows: fresh0, bad } = rowsFromText(text), seen = new Set(rows.map(sortKey));
+  const fresh = fresh0.filter(r => !seen.has(sortKey(r)));
+  rows = rows.concat(fresh);
+  say(`Added ${fresh.length} event(s)` + (bad ? `, skipped ${bad} unreadable row(s).` : ".") + (fresh.length ? ` First is on ${fresh[0].date}.` : ""));
+  render();
+}
+$("pasteAdd").onclick = () => { addRows($("paste").value); $("paste").value = ""; };
+$("file").onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  if (/\.xls[xm]?$/i.test(f.name)) { say("The web version reads CSV only - save the sheet as CSV first."); return; }
+  f.text().then(addRows); e.target.value = "";
+};
+
+function download(blob, name) {
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+$("save").onclick = () => download(new Blob([toCSV(rows)], { type: "text/csv" }), "timeline_events.csv");
+$("capture").onclick = () => {   // the timeline exactly as shown, at 2x resolution
+  const w = +svg.getAttribute("width"), h = +svg.getAttribute("height"), img = new Image();
+  img.onload = () => {
+    const c = document.createElement("canvas"); c.width = w * 2; c.height = h * 2;
+    const g = c.getContext("2d"); g.scale(2, 2); g.drawImage(img, 0, 0, w, h);
+    c.toBlob(b => download(b, "timeline.png"), "image/png");
+  };
+  img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(svg));
+};
+
+render();
+</script>
+</body>
+</html>

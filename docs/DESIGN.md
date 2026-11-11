@@ -15,6 +15,14 @@
 | 9 | Table lists only events in the visible range | `in_view`, applied in `render` |
 | 10 | Timeline and table can each be hidden | `show` checklist |
 | 11 | Capture button makes a static PNG | browser-side `Plotly.downloadImage` |
+| 12 | Bands: events with start and end date, labelled at start or earliest visible date | `layout_bands`, `build_figure` |
+| 13 | Events with only a start date display as before | `layout_labels` |
+| 14 | Web version that can be embedded | `web/index.html` |
+| 15 | Windows executable from the Python version | `.github/workflows/build-exe.yml` |
+| 16 | Data persists until cleared, with option to save | local storage (`rows`, `view` stores); Download CSV |
+
+Function names above are the Python ones; `web/index.html` has the same
+functions in camelCase.
 
 ## How it fits together
 
@@ -43,6 +51,21 @@ disagree. All logic is in `timeline.py` as plain functions and is unit tested.
 Labels have a white background, so a line running up to a higher label passes
 behind lower ones rather than through their text.
 
+## Bands (requirement 12)
+
+Bands sit in their own strip above the single-date labels, so date lines never
+cross them. Each takes the lowest lane that is free from its start date; a
+lane stays busy until both the band and its label have ended. The label is
+placed at `max(band start, view start)`, never past the band's end.
+
+## Persistence (requirement 16)
+
+Both versions keep events, visible range and title in the browser's local
+storage. The sample loads only when nothing has ever been stored; after
+*Clear all* the stored list is empty and stays empty. The exe uses the same
+mechanism through the default browser. If storage is blocked (some embedded
+pages), the web version still works but forgets on reload.
+
 ## Decisions
 
 - **Dash + Plotly.** Pure Python, runs locally, and Plotly gives drag-pan,
@@ -56,11 +79,19 @@ behind lower ones rather than through their text.
 - **An unreadable date typed into the table is rejected** and the previous
   date kept, with a message; unreadable rows in a file are skipped and counted.
 - **Dates only, no times.** Events sit at the start of their day.
+- **Web version has no dependencies** (vanilla JS, SVG, canvas for the PNG) so
+  it runs from a file, offline, or inside an iframe on a locked-down page.
+- **The exe is built by GitHub Actions on Windows**, because PyInstaller can
+  only build for the system it runs on. Binaries are not stored in the repo.
 
 ## Known limits
 
-- Data lives in the browser tab: refresh reloads the sample file. Download the
-  CSV to keep your work.
+- Data is stored per browser and per version; it does not sync between
+  devices. Download the CSV to move it.
+- Python version: band labels re-anchor to the view edge when a drag is
+  released, not during it (the web version does it live).
+- Web version reads CSV only, not Excel.
+- The exe is about 70 MB, takes a few seconds to start, and uses port 8050.
 - Label width is estimated, not measured, so very wide characters can touch a
   neighbouring label.
 - The mouse wheel zooms; sideways scrolling is by drag or the arrow buttons.
@@ -68,5 +99,5 @@ behind lower ones rather than through their text.
 
 ## Possible next steps
 
-Time-of-day events, date ranges (bars), per-class show/hide, saving several
+Time-of-day events, per-class show/hide, saving several
 named timelines, wheel-to-scroll option.

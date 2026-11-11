@@ -3,10 +3,14 @@
 State lives in two browser-side stores:
   rows : every event (the table only shows those inside the visible range)
   view : the visible date range {start, end, n}
+Both are kept in the browser's local storage, so data persists until cleared.
 """
 from __future__ import annotations
 
 import base64
+import sys
+import threading
+import webbrowser
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -16,7 +20,8 @@ from dash import (ALL, Dash, Input, Output, State, callback, clientside_callback
 
 import timeline as tl
 
-SAMPLE = Path(__file__).with_name("sample_events.csv")
+# When frozen into an .exe, bundled files are unpacked to sys._MEIPASS.
+SAMPLE = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / "sample_events.csv"
 ZOOMS = {"1 week": 7, "2 weeks": 14, "1 month": 31, "3 months": 92, "6 months": 184}
 
 
@@ -36,14 +41,14 @@ bar = {"display": "flex", "flexWrap": "wrap", "gap": "6px", "alignItems": "cente
 app = Dash(__name__, title="Timeline Visualiser")
 app.layout = html.Div(style={"fontFamily": "Segoe UI, Helvetica, Arial, sans-serif",
                              "maxWidth": "1400px", "margin": "0 auto", "padding": "12px"}, children=[
-    dcc.Store(id="rows", data=rows0),
-    dcc.Store(id="view", data=view_dict(*tl.default_view(rows0))),
+    dcc.Store(id="rows", data=rows0, storage_type="local"),  # sample only until the user has data
+    dcc.Store(id="view", storage_type="local"),
     dcc.Store(id="width", data=1100),
     dcc.Interval(id="tick", interval=1500),
     dcc.Download(id="download"),
     html.H2("Timeline Visualiser", style={"margin": "0 0 4px"}),
     html.Div(style=bar, children=[
-        dcc.Input(id="title", placeholder="Timeline title (optional)", debounce=True,
+        dcc.Input(id="title", placeholder="Timeline title (optional)", debounce=True, persistence=True,
                   style={**btn, "cursor": "text", "width": "260px"}),
         dcc.Checklist(id="show", options=["Timeline", "Table"], value=["Timeline", "Table"], inline=True,
                       inputStyle={"marginRight": "4px"}, labelStyle={"marginRight": "12px"}),
@@ -70,17 +75,18 @@ app.layout = html.Div(style={"fontFamily": "Segoe UI, Helvetica, Arial, sans-ser
         ]),
         dash_table.DataTable(
             id="table", editable=True, row_deletable=True,
-            columns=[{"name": "Date (YYYY-MM-DD)", "id": "date"}, {"name": "Class", "id": "class"},
+            columns=[{"name": "Start (YYYY-MM-DD)", "id": "date"}, {"name": "End (optional)", "id": "end"},
+                     {"name": "Class", "id": "class"},
                      {"name": "Description", "id": "description"}],
             style_cell={"textAlign": "left", "padding": "6px", "fontFamily": "Segoe UI, Helvetica, Arial, sans-serif", "fontSize": "14px",
                         "whiteSpace": "normal", "height": "auto"},
-            style_cell_conditional=[{"if": {"column_id": "date"}, "width": "150px"},
+            style_cell_conditional=[{"if": {"column_id": "date"}, "width": "150px"}, {"if": {"column_id": "end"}, "width": "130px"},
                                     {"if": {"column_id": "class"}, "width": "160px", "fontWeight": "600"}],
             style_header={"fontWeight": "600", "backgroundColor": "#f3f2ee"}),
         html.Details(style={"marginTop": "10px"}, children=[
             html.Summary("Paste rows from Excel or CSV"),
             dcc.Textarea(id="paste", style={"width": "100%", "height": "110px", "marginTop": "6px"},
-                         placeholder="date, class, description - one event per line (tab or comma separated)"),
+                         placeholder="date, class, description  or  start, end, class, description - one per line (tab or comma separated)"),
             html.Button("Add pasted rows", id="paste-add", style=btn),
         ]),
     ]),
@@ -109,9 +115,13 @@ clientside_callback(
 @callback(Output("view", "data"),
           Input("graph", "relayoutData"), Input("prev", "n_clicks"), Input("next", "n_clicks"),
           Input("today", "n_clicks"), Input("first", "n_clicks"), Input({"zoom": ALL}, "n_clicks"),
-          State("view", "data"), State("rows", "data"), prevent_initial_call=True)
-def update_view(relayout, _p, _n, _t, _f, _z, view, rows):
+          Input("rows", "data"), State("view", "data"))
+def update_view(relayout, _p, _n, _t, _f, _z, rows, view):
     """Every pan, zoom and button press ends up here and sets the visible range."""
+    if view is None:  # first ever run: one month around the data
+        return view_dict(*tl.default_view(rows or []))
+    if ctx.triggered_id in (None, "rows"):
+        return no_update
     start, end = view_range(view)
     span, centre, trig = end - start, start + (end - start) / 2, ctx.triggered_id
     if trig == "graph":
@@ -163,8 +173,9 @@ def update_rows(_ts, _a, contents, _pa, _c, table, previous, rows, view, filenam
                 paste_out = ""
         except Exception as err:  # unreadable file: say so, keep existing data
             return no_update, f"Could not read that data ({err}).", no_update
-        seen = {(r["date"], r["class"], r["description"]) for r in rows}
-        fresh = [r for r in new if (r["date"], r["class"], r["description"]) not in seen]
+        key = lambda r: (r["date"], r.get("end") or "", r["class"], r["description"])
+        seen = {key(r) for r in rows}
+        fresh = [r for r in new if key(r) not in seen]
         rows = rows + fresh
         status = f"Added {len(fresh)} event(s)" + (f", skipped {bad} unreadable row(s)." if bad else ".")
         if fresh:
@@ -183,7 +194,10 @@ def update_rows(_ts, _a, contents, _pa, _c, table, previous, rows, view, filenam
                 if old is None:
                     continue
                 day = tl.parse_date(old["date"])
-            new = tl.make_row(day, r.get("class") or "", r.get("description") or "", r.get("id"))
+            end = tl.parse_date(r.get("end"))
+            if end is None and str(r.get("end") or "").strip():
+                status = f"'{r.get('end')}' is not a date - end date cleared."
+            new = tl.make_row(day, r.get("class") or "", r.get("description") or "", r.get("id"), end)
             by_id[new["id"]] = new
         rows = list(by_id.values())
     return tl.sort_rows(rows), status, paste_out
@@ -195,6 +209,9 @@ def update_rows(_ts, _a, contents, _pa, _c, table, previous, rows, view, filenam
           Input("show", "value"), Input("title", "value"))
 def render(rows, view, width, show, title):
     """Redraw the timeline and filter the table to the visible range."""
+    if view is None:
+        return (no_update,) * 5
+    rows = rows or []
     start, end = view_range(view)
     visible = tl.in_view(rows, start, end)
     caption = f"Showing {start:%d %b %Y} – {end:%d %b %Y} · {len(visible)} of {len(rows)} events"
@@ -212,4 +229,5 @@ def download_csv(_n, rows):
 
 
 if __name__ == "__main__":
+    threading.Timer(1.0, webbrowser.open, ["http://127.0.0.1:8050"]).start()
     app.run(debug=False)

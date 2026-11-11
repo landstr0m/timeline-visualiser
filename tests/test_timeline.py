@@ -29,7 +29,7 @@ def test_two_column_activity_format_and_tabs():
 def test_csv_round_trip():
     rows, _ = tl.rows_from_text("2025-03-10,Results,\"a, b\"\n")
     again, _ = tl.rows_from_text(tl.to_csv(rows))
-    assert [(r["date"], r["class"], r["description"]) for r in again] == [("2025-03-10", "Results", "a, b")]
+    assert [(r["date"], r["end"], r["class"], r["description"]) for r in again] == [("2025-03-10", "", "Results", "a, b")]
 
 
 def test_clamp_view_limits():
@@ -58,3 +58,14 @@ def test_labels_never_overlap_and_shorten_when_crowded():
                 assert a["x_end"] <= b["x"] or b["x_end"] <= a["x"]
     roomy = tl.layout_labels(rows[:2], px_per_day=30)
     assert len(roomy[0]["lines"]) > len(placed[0]["lines"])
+
+
+def test_bands_parse_overlap_view_and_label_follows_view():
+    rows, _ = tl.rows_from_text("start,end,class,description\n2025-03-01,2025-03-20,Phase,Run\n2025-03-25,2025-03-21,Phase,Swapped\n")
+    assert rows[0]["end"] == "2025-03-20" and (rows[1]["date"], rows[1]["end"]) == ("2025-03-21", "2025-03-25")
+    assert len(tl.in_view(rows, datetime(2025, 3, 10), datetime(2025, 3, 12))) == 1  # band spans the view
+    headerless, _ = tl.rows_from_text("2025-03-01,2025-03-20,Phase,Run\n2025-03-05,,Results,x\n")
+    assert headerless[0]["end"] == "2025-03-20" and headerless[1]["end"] == ""
+    band = tl.layout_bands(rows[:1], 30, date(2025, 3, 10).toordinal())[0]
+    assert band["label_x"] == date(2025, 3, 10).toordinal()
+    assert tl.build_figure(rows, datetime(2025, 3, 1), datetime(2025, 4, 1)).layout.shapes

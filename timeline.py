@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import plotly.graph_objects as go
 
-COLUMNS = ["date", "class", "description"]
+COLUMNS = ["date", "end", "class", "description"]
 MIN_DAYS, MAX_DAYS, DEFAULT_DAYS = 7, 184, 31
 
 # Colour-blind-checked categorical palette, assigned in fixed order.
@@ -24,7 +24,8 @@ OTHER = "#8a897f"
 INK, MUTED, GRID = "#1a1a19", "#6b6a62", "#e6e5df"
 
 ALIASES = {
-    "date": "date", "day": "date", "when": "date",
+    "date": "date", "day": "date", "when": "date", "start": "date", "start date": "date", "from": "date",
+    "end": "end", "end date": "end", "finish": "end", "to": "end", "until": "end",
     "class": "class", "title": "class", "type": "class", "category": "class",
     "description": "description", "desc": "description", "details": "description",
     "text": "description", "activity": "activity", "event": "activity",
@@ -72,20 +73,26 @@ def _cell(value) -> str:
     return "" if value is None or (isinstance(value, float) and pd.isna(value)) else str(value).strip()
 
 
-def make_row(day: date, cls: str = "", description: str = "", row_id: str | None = None) -> dict:
+def make_row(day: date, cls: str = "", description: str = "", row_id: str | None = None,
+             end: date | None = None) -> dict:
+    """One event. With an end date it is a band; without, a single-date event."""
+    if end and end < day:
+        day, end = end, day
     return {"id": row_id or uuid.uuid4().hex[:10], "date": day.isoformat(),
+            "end": end.isoformat() if end and end != day else "",
             "class": cls.strip().rstrip(":").strip(), "description": description.strip()}
 
 
 def sort_rows(rows: list[dict]) -> list[dict]:
-    return sorted(rows, key=lambda r: (r["date"], r["class"].lower(), r["description"].lower()))
+    return sorted(rows, key=lambda r: (r["date"], r.get("end") or "", r["class"].lower(), r["description"].lower()))
 
 
 def rows_from_frame(raw: pd.DataFrame) -> tuple[list[dict], int]:
     """Turn a header-less DataFrame into event rows. Returns (rows, rejected).
 
     A first row whose first cell is not a date is treated as a header.
-    Two-column data is read as date + "Class: description".
+    Without a header: 2 columns = date + "Class: description",
+    3 = date, class, description; 4 = date, end, class, description.
     """
     raw = raw.dropna(how="all")
     if raw.empty:
@@ -95,7 +102,7 @@ def rows_from_frame(raw: pd.DataFrame) -> tuple[list[dict], int]:
         names = [ALIASES.get(_cell(c).lower(), f"_{i}") for i, c in enumerate(first)]
         raw = raw.iloc[1:]
     else:
-        names = ["date", "activity"] if raw.shape[1] == 2 else COLUMNS
+        names = {2: ["date", "activity"], 3: ["date", "class", "description"]}.get(raw.shape[1], COLUMNS)
         names = (names + [f"_{i}" for i in range(raw.shape[1])])[:raw.shape[1]]
     raw.columns = names
     rows, rejected = [], 0
@@ -108,7 +115,7 @@ def rows_from_frame(raw: pd.DataFrame) -> tuple[list[dict], int]:
         if day is None or not (cls or desc):
             rejected += 1
             continue
-        rows.append(make_row(day, cls, desc))
+        rows.append(make_row(day, cls, desc, end=parse_date(rec.get("end"))))
     return sort_rows(rows), rejected
 
 
@@ -159,12 +166,13 @@ def default_view(rows: list[dict]) -> tuple[datetime, datetime]:
 
 
 def in_view(rows: list[dict], start: datetime, end: datetime) -> list[dict]:
+    """Events on screen: single dates inside the range, bands that overlap it."""
     lo, hi = start.date().isoformat(), end.date().isoformat()
-    return [r for r in rows if lo <= r["date"] <= hi]
+    return [r for r in rows if r["date"] <= hi and (r.get("end") or r["date"]) >= lo]
 
 
 # -------------------------------------------------------------- layout ----
-CHAR_PX, LINE_PX, LANE_GAP, MAX_LANES = 7.0, 16, 10, 5
+CHAR_PX, LINE_PX, LANE_GAP, MAX_LANES, BAND_PX = 7.0, 16, 10, 5, 28
 # Detail levels, tried in order until the labels fit in MAX_LANES lanes:
 # (wrap width in characters, max description lines)
 LEVELS = [(34, 2), (24, 1), (0, 0)]
@@ -204,6 +212,30 @@ def layout_labels(rows: list[dict], px_per_day: float, show_date: bool = False) 
     return placed
 
 
+def layout_bands(rows: list[dict], px_per_day: float, view_start: int) -> list[dict]:
+    """Give each band (event with an end date) a lane and a label position.
+
+    The label sits at the band's start, or at the left edge of the view when
+    the band started earlier. A lane is reused once the previous band and its
+    label have both ended.
+    """
+    placed, lane_end = [], []
+    for row in sort_rows(rows):
+        x0 = date.fromisoformat(row["date"]).toordinal()
+        x1 = date.fromisoformat(row["end"]).toordinal()
+        label_x = min(max(x0, view_start), x1)
+        name = row["class"] or "Event"
+        chars = len(name) + len(row["description"]) + 2
+        right = max(x1, label_x + (chars * CHAR_PX + 16) / px_per_day)
+        lane = next((i for i, e in enumerate(lane_end) if e <= x0), len(lane_end))
+        if lane == len(lane_end):
+            lane_end.append(0)
+        lane_end[lane] = right
+        placed.append({**row, "lane": lane + 1, "label_x": label_x, "x": x0, "x_end": right,
+                       "text": f"<b>{name}</b>  {row['description']}".strip()})
+    return placed
+
+
 # -------------------------------------------------------------- figure ----
 def build_figure(rows: list[dict], start: datetime, end: datetime,
                  width_px: int = 1100, title: str = "") -> go.Figure:
@@ -215,11 +247,15 @@ def build_figure(rows: list[dict], start: datetime, end: datetime,
 
     # Lay out one extra screen either side so dragging reveals finished labels.
     pad = timedelta(days=span)
-    labels = layout_labels(in_view(rows, start - pad, end + pad), px_per_day, show_date=not daily)
+    shown = in_view(rows, start - pad, end + pad)
+    labels = layout_labels([r for r in shown if not r.get("end")], px_per_day, show_date=not daily)
+    view_start = start.date().toordinal() + (start.time() != datetime.min.time())
+    bands = layout_bands([r for r in shown if r.get("end")], px_per_day, view_start)
     n_lines = max((len(p["lines"]) for p in labels), default=1)
     lane_px = n_lines * LINE_PX + LANE_GAP
-    n_lanes = max((p["lane"] for p in labels), default=1)
-    top = 24 + n_lanes * lane_px
+    points_top = 24 + max((p["lane"] for p in labels), default=0) * lane_px
+    # Bands run in their own strip above the single-date labels.
+    top = points_top + (10 + max(b["lane"] for b in bands) * BAND_PX if bands else 0)
 
     fig = go.Figure()
     for cls in sorted({p["class"] for p in labels}, key=str.lower):
@@ -251,6 +287,21 @@ def build_figure(rows: list[dict], start: datetime, end: datetime,
                               fillcolor="#f6f5f1", line_width=0, layer="below")
             day += timedelta(days=1)
 
+    for b in bands:
+        y0 = points_top + 10 + (b["lane"] - 1) * BAND_PX
+        colour = colours.get(b["class"], OTHER)
+        tip = (f"{date.fromisoformat(b['date']):%d %b %Y} – {date.fromisoformat(b['end']):%d %b %Y}"
+               f"<br><b>{b['class'] or 'Event'}</b><br>{b['description']}")
+        fig.add_shape(type="rect", x0=b["date"], x1=b["end"], y0=y0, y1=y0 + BAND_PX - 6,
+                      fillcolor=colour, opacity=0.3, line=dict(color=colour, width=1), layer="below")
+        fig.add_annotation(x=date.fromordinal(b["label_x"]).isoformat(), y=y0 + (BAND_PX - 6) / 2,
+                           xanchor="left", yanchor="middle", xshift=6, text=b["text"], showarrow=False,
+                           font=dict(size=12, color=INK))
+        # Invisible hover target (annotation hover text would block dragging).
+        fig.add_trace(go.Scatter(x=[date.fromordinal(b["label_x"]).isoformat()], y=[y0 + (BAND_PX - 6) / 2],
+                                 mode="markers", marker=dict(size=16, opacity=0), hovertext=[tip],
+                                 hoverinfo="text", showlegend=False))
+
     if px_per_day >= 48:
         ticks = dict(dtick=86400000, tickformat="%a %d\n%b %Y")
     elif daily:
@@ -266,7 +317,7 @@ def build_figure(rows: list[dict], start: datetime, end: datetime,
         font=dict(family="Segoe UI, Helvetica, Arial, sans-serif", color=INK),
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1,
                     itemclick=False, itemdoubleclick=False, font=dict(color=MUTED)),
-        showlegend=len(fig.data) > 1,
+        showlegend=len({p['class'] for p in labels}) > 1,
         hoverlabel=dict(bgcolor="#fff", font=dict(color=INK)),
         xaxis=dict(type="date", range=[start, end], showline=True, linecolor=MUTED,
                    ticks="outside", tickcolor=MUTED, tickfont=dict(color=MUTED),
