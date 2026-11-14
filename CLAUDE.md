@@ -12,6 +12,7 @@ capture. Three deliverables share one behaviour:
 ## Commands
 - Run: `python app.py` (http://127.0.0.1:8050)
 - Test: `python -m pytest -q` (includes the web/Python parity check; needs Node)
+- Format/lint: `ruff format .` and `ruff check .` (CI fails if not clean)
 - Web: open `web/index.html` directly; no build step.
 
 ## Standards

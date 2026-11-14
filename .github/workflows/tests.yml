@@ -17,5 +17,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: pip install -r requirements.txt pytest
+      - run: pip install -r requirements.txt pytest ruff
+      - run: ruff format --check .
+      - run: ruff check .
       - run: python -m pytest -q

@@ -66,6 +66,26 @@ storage. The sample loads only when nothing has ever been stored; after
 mechanism through the default browser. If storage is blocked (some embedded
 pages), the web version still works but forgets on reload.
 
+## Data that may come in twos later
+
+Planned optional CSV columns, so these can be added without breaking older
+files (missing column = blank, files without them still load):
+
+| Column | Why |
+|---|---|
+| `id` | Stable row id, needed for dependencies |
+| `timeline` | Several named timelines in one file; also the basis for clash checks between timelines |
+| `owner` | Who is responsible for the event |
+| `source` | Which file or system the row came from |
+| `depends_on` | Ids this event follows; moving one shifts its dependants by the same number of days |
+
+Overlaps/clashes are worked out from dates and `timeline`, not stored.
+
+## Data: open vs private
+
+Only invented sample data lives in the repo. Real event files stay on the
+user's machine or in browser storage. The live page and repo are public.
+
 ## Decisions
 
 - **Dash + Plotly.** Pure Python, runs locally, and Plotly gives drag-pan,

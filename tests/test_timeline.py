@@ -27,9 +27,11 @@ def test_two_column_activity_format_and_tabs():
 
 
 def test_csv_round_trip():
-    rows, _ = tl.rows_from_text("2025-03-10,Results,\"a, b\"\n")
+    rows, _ = tl.rows_from_text('2025-03-10,Results,"a, b"\n')
     again, _ = tl.rows_from_text(tl.to_csv(rows))
-    assert [(r["date"], r["end"], r["class"], r["description"]) for r in again] == [("2025-03-10", "", "Results", "a, b")]
+    assert [(r["date"], r["end"], r["class"], r["description"]) for r in again] == [
+        ("2025-03-10", "", "Results", "a, b")
+    ]
 
 
 def test_clamp_view_limits():
@@ -50,7 +52,9 @@ def test_colour_is_stable_per_class():
 
 
 def test_labels_never_overlap_and_shorten_when_crowded():
-    rows = [tl.make_row(date(2025, 3, 1 + i % 5), "Results", "a fairly long description of the event") for i in range(20)]
+    rows = [
+        tl.make_row(date(2025, 3, 1 + i % 5), "Results", "a fairly long description of the event") for i in range(20)
+    ]
     placed = tl.layout_labels(rows, px_per_day=30)
     for a in placed:
         for b in placed:
@@ -61,7 +65,9 @@ def test_labels_never_overlap_and_shorten_when_crowded():
 
 
 def test_bands_parse_overlap_view_and_label_follows_view():
-    rows, _ = tl.rows_from_text("start,end,class,description\n2025-03-01,2025-03-20,Phase,Run\n2025-03-25,2025-03-21,Phase,Swapped\n")
+    rows, _ = tl.rows_from_text(
+        "start,end,class,description\n2025-03-01,2025-03-20,Phase,Run\n2025-03-25,2025-03-21,Phase,Swapped\n"
+    )
     assert rows[0]["end"] == "2025-03-20" and (rows[1]["date"], rows[1]["end"]) == ("2025-03-21", "2025-03-25")
     assert len(tl.in_view(rows, datetime(2025, 3, 10), datetime(2025, 3, 12))) == 1  # band spans the view
     headerless, _ = tl.rows_from_text("2025-03-01,2025-03-20,Phase,Run\n2025-03-05,,Results,x\n")

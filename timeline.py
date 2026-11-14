@@ -3,6 +3,7 @@
 Three jobs: clean incoming rows, lay out labels so they stay legible,
 and build the Plotly figure. Everything here is unit-testable.
 """
+
 from __future__ import annotations
 
 import io
@@ -18,20 +19,44 @@ MIN_DAYS, MAX_DAYS, DEFAULT_DAYS = 7, 184, 31
 
 # Colour-blind-checked categorical palette, assigned in fixed order.
 # Classes beyond the 8th share the neutral OTHER colour (never a recycled hue).
-PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100",
-           "#e87ba4", "#008300", "#6250d6", "#e34948"]
+PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 OTHER = "#8a897f"
 INK, MUTED, GRID = "#1a1a19", "#6b6a62", "#e6e5df"
 
 ALIASES = {
-    "date": "date", "day": "date", "when": "date", "start": "date", "start date": "date", "from": "date",
-    "end": "end", "end date": "end", "finish": "end", "to": "end", "until": "end",
-    "class": "class", "title": "class", "type": "class", "category": "class",
-    "description": "description", "desc": "description", "details": "description",
-    "text": "description", "activity": "activity", "event": "activity",
+    "date": "date",
+    "day": "date",
+    "when": "date",
+    "start": "date",
+    "start date": "date",
+    "from": "date",
+    "end": "end",
+    "end date": "end",
+    "finish": "end",
+    "to": "end",
+    "until": "end",
+    "class": "class",
+    "title": "class",
+    "type": "class",
+    "category": "class",
+    "description": "description",
+    "desc": "description",
+    "details": "description",
+    "text": "description",
+    "activity": "activity",
+    "event": "activity",
 }
-DATE_FORMATS = ["%d-%b-%Y", "%d-%b-%y", "%d %b %Y", "%d %B %Y", "%d%b%Y",
-                "%d.%m.%Y", "%d/%m/%Y", "%d.%m.%y", "%d/%m/%y"]
+DATE_FORMATS = [
+    "%d-%b-%Y",
+    "%d-%b-%y",
+    "%d %b %Y",
+    "%d %B %Y",
+    "%d%b%Y",
+    "%d.%m.%Y",
+    "%d/%m/%Y",
+    "%d.%m.%y",
+    "%d/%m/%y",
+]
 NO_YEAR_FORMATS = ["%d-%b", "%d %b", "%d %B", "%d.%m.", "%d/%m"]
 
 
@@ -73,14 +98,19 @@ def _cell(value) -> str:
     return "" if value is None or (isinstance(value, float) and pd.isna(value)) else str(value).strip()
 
 
-def make_row(day: date, cls: str = "", description: str = "", row_id: str | None = None,
-             end: date | None = None) -> dict:
+def make_row(
+    day: date, cls: str = "", description: str = "", row_id: str | None = None, end: date | None = None
+) -> dict:
     """One event. With an end date it is a band; without, a single-date event."""
     if end and end < day:
         day, end = end, day
-    return {"id": row_id or uuid.uuid4().hex[:10], "date": day.isoformat(),
-            "end": end.isoformat() if end and end != day else "",
-            "class": cls.strip().rstrip(":").strip(), "description": description.strip()}
+    return {
+        "id": row_id or uuid.uuid4().hex[:10],
+        "date": day.isoformat(),
+        "end": end.isoformat() if end and end != day else "",
+        "class": cls.strip().rstrip(":").strip(),
+        "description": description.strip(),
+    }
 
 
 def sort_rows(rows: list[dict]) -> list[dict]:
@@ -103,7 +133,7 @@ def rows_from_frame(raw: pd.DataFrame) -> tuple[list[dict], int]:
         raw = raw.iloc[1:]
     else:
         names = {2: ["date", "activity"], 3: ["date", "class", "description"]}.get(raw.shape[1], COLUMNS)
-        names = (names + [f"_{i}" for i in range(raw.shape[1])])[:raw.shape[1]]
+        names = (names + [f"_{i}" for i in range(raw.shape[1])])[: raw.shape[1]]
     raw.columns = names
     rows, rejected = [], 0
     for rec in raw.to_dict("records"):
@@ -124,8 +154,7 @@ def rows_from_text(text: str) -> tuple[list[dict], int]:
     if not text.strip():
         return [], 0
     sep = "\t" if "\t" in text else (";" if text.count(";") > text.count(",") else ",")
-    raw = pd.read_csv(io.StringIO(text), sep=sep, header=None, dtype=str,
-                      skipinitialspace=True, keep_default_na=False)
+    raw = pd.read_csv(io.StringIO(text), sep=sep, header=None, dtype=str, skipinitialspace=True, keep_default_na=False)
     return rows_from_frame(raw)
 
 
@@ -231,14 +260,21 @@ def layout_bands(rows: list[dict], px_per_day: float, view_start: int) -> list[d
         if lane == len(lane_end):
             lane_end.append(0)
         lane_end[lane] = right
-        placed.append({**row, "lane": lane + 1, "label_x": label_x, "x": x0, "x_end": right,
-                       "text": f"<b>{name}</b>  {row['description']}".strip()})
+        placed.append(
+            {
+                **row,
+                "lane": lane + 1,
+                "label_x": label_x,
+                "x": x0,
+                "x_end": right,
+                "text": f"<b>{name}</b>  {row['description']}".strip(),
+            }
+        )
     return placed
 
 
 # -------------------------------------------------------------- figure ----
-def build_figure(rows: list[dict], start: datetime, end: datetime,
-                 width_px: int = 1100, title: str = "") -> go.Figure:
+def build_figure(rows: list[dict], start: datetime, end: datetime, width_px: int = 1100, title: str = "") -> go.Figure:
     span = (end - start).total_seconds() / 86400
     margin = dict(l=30, r=30, t=70 if title else 40, b=50)
     px_per_day = max(width_px - margin["l"] - margin["r"], 200) / span
@@ -266,41 +302,88 @@ def build_figure(rows: list[dict], start: datetime, end: datetime,
             xs += [p["date"], p["date"], None]
             ys += [0, y, None]
             hover += [tip, tip, None]
-        fig.add_trace(go.Scatter(
-            x=xs, y=ys, mode="lines+markers", name=cls or "Event",
-            line=dict(color=colours.get(cls, OTHER), width=2),
-            marker=dict(size=8, color=colours.get(cls, OTHER), line=dict(color="#fff", width=2)),
-            hovertext=hover, hoverinfo="text", cliponaxis=False))
+        fig.add_trace(
+            go.Scatter(
+                x=xs,
+                y=ys,
+                mode="lines+markers",
+                name=cls or "Event",
+                line=dict(color=colours.get(cls, OTHER), width=2),
+                marker=dict(size=8, color=colours.get(cls, OTHER), line=dict(color="#fff", width=2)),
+                hovertext=hover,
+                hoverinfo="text",
+                cliponaxis=False,
+            )
+        )
     for p in labels:
         text = "<br>".join([f"<b>{p['lines'][0]}</b>"] + p["lines"][1:])
         fig.add_annotation(
-            x=p["date"], y=24 + (p["lane"] - 1) * lane_px, xanchor="left", yanchor="bottom",
-            xshift=5, text=text, align="left", showarrow=False,
-            font=dict(size=12, color=INK), bgcolor="rgba(255,255,255,0.92)", borderpad=2)
+            x=p["date"],
+            y=24 + (p["lane"] - 1) * lane_px,
+            xanchor="left",
+            yanchor="bottom",
+            xshift=5,
+            text=text,
+            align="left",
+            showarrow=False,
+            font=dict(size=12, color=INK),
+            bgcolor="rgba(255,255,255,0.92)",
+            borderpad=2,
+        )
 
     if span <= 100:  # shade weekends
         day = (start - pad).date()
         while day <= (end + pad).date():
             if day.weekday() == 5:
-                fig.add_vrect(x0=datetime.combine(day, datetime.min.time()) - timedelta(hours=12),
-                              x1=datetime.combine(day, datetime.min.time()) + timedelta(hours=36),
-                              fillcolor="#f6f5f1", line_width=0, layer="below")
+                fig.add_vrect(
+                    x0=datetime.combine(day, datetime.min.time()) - timedelta(hours=12),
+                    x1=datetime.combine(day, datetime.min.time()) + timedelta(hours=36),
+                    fillcolor="#f6f5f1",
+                    line_width=0,
+                    layer="below",
+                )
             day += timedelta(days=1)
 
     for b in bands:
         y0 = points_top + 10 + (b["lane"] - 1) * BAND_PX
         colour = colours.get(b["class"], OTHER)
-        tip = (f"{date.fromisoformat(b['date']):%d %b %Y} – {date.fromisoformat(b['end']):%d %b %Y}"
-               f"<br><b>{b['class'] or 'Event'}</b><br>{b['description']}")
-        fig.add_shape(type="rect", x0=b["date"], x1=b["end"], y0=y0, y1=y0 + BAND_PX - 6,
-                      fillcolor=colour, opacity=0.3, line=dict(color=colour, width=1), layer="below")
-        fig.add_annotation(x=date.fromordinal(b["label_x"]).isoformat(), y=y0 + (BAND_PX - 6) / 2,
-                           xanchor="left", yanchor="middle", xshift=6, text=b["text"], showarrow=False,
-                           font=dict(size=12, color=INK))
+        tip = (
+            f"{date.fromisoformat(b['date']):%d %b %Y} – {date.fromisoformat(b['end']):%d %b %Y}"
+            f"<br><b>{b['class'] or 'Event'}</b><br>{b['description']}"
+        )
+        fig.add_shape(
+            type="rect",
+            x0=b["date"],
+            x1=b["end"],
+            y0=y0,
+            y1=y0 + BAND_PX - 6,
+            fillcolor=colour,
+            opacity=0.3,
+            line=dict(color=colour, width=1),
+            layer="below",
+        )
+        fig.add_annotation(
+            x=date.fromordinal(b["label_x"]).isoformat(),
+            y=y0 + (BAND_PX - 6) / 2,
+            xanchor="left",
+            yanchor="middle",
+            xshift=6,
+            text=b["text"],
+            showarrow=False,
+            font=dict(size=12, color=INK),
+        )
         # Invisible hover target (annotation hover text would block dragging).
-        fig.add_trace(go.Scatter(x=[date.fromordinal(b["label_x"]).isoformat()], y=[y0 + (BAND_PX - 6) / 2],
-                                 mode="markers", marker=dict(size=16, opacity=0), hovertext=[tip],
-                                 hoverinfo="text", showlegend=False))
+        fig.add_trace(
+            go.Scatter(
+                x=[date.fromordinal(b["label_x"]).isoformat()],
+                y=[y0 + (BAND_PX - 6) / 2],
+                mode="markers",
+                marker=dict(size=16, opacity=0),
+                hovertext=[tip],
+                hoverinfo="text",
+                showlegend=False,
+            )
+        )
 
     if px_per_day >= 48:
         ticks = dict(dtick=86400000, tickformat="%a %d\n%b %Y")
@@ -312,16 +395,36 @@ def build_figure(rows: list[dict], start: datetime, end: datetime,
         ticks = dict(dtick="M1", tickformat="%b\n%Y")
     fig.update_layout(
         title=dict(text=title, x=0.01, font=dict(size=20, color=INK)) if title else None,
-        height=top + margin["t"] + margin["b"], margin=margin,
-        paper_bgcolor="#fff", plot_bgcolor="#fff", dragmode="pan",
+        height=top + margin["t"] + margin["b"],
+        margin=margin,
+        paper_bgcolor="#fff",
+        plot_bgcolor="#fff",
+        dragmode="pan",
         font=dict(family="Segoe UI, Helvetica, Arial, sans-serif", color=INK),
-        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1,
-                    itemclick=False, itemdoubleclick=False, font=dict(color=MUTED)),
-        showlegend=len({p['class'] for p in labels}) > 1,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.0,
+            xanchor="right",
+            x=1,
+            itemclick=False,
+            itemdoubleclick=False,
+            font=dict(color=MUTED),
+        ),
+        showlegend=len({p["class"] for p in labels}) > 1,
         hoverlabel=dict(bgcolor="#fff", font=dict(color=INK)),
-        xaxis=dict(type="date", range=[start, end], showline=True, linecolor=MUTED,
-                   ticks="outside", tickcolor=MUTED, tickfont=dict(color=MUTED),
-                   showgrid=not daily, gridcolor=GRID, **ticks),
+        xaxis=dict(
+            type="date",
+            range=[start, end],
+            showline=True,
+            linecolor=MUTED,
+            ticks="outside",
+            tickcolor=MUTED,
+            tickfont=dict(color=MUTED),
+            showgrid=not daily,
+            gridcolor=GRID,
+            **ticks,
+        ),
         yaxis=dict(range=[0, top], visible=False, fixedrange=True),
     )
     return fig

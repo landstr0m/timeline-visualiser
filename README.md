@@ -2,6 +2,12 @@
 
 Turns a table of dated events into a side-scrolling timeline.
 
+**Purpose.** One of a set of small tools for day-to-day admin: show project
+phases, deadlines and expected results at a glance, and drop a clean picture
+into a presentation. **Users:** me and colleagues, working with their own CSV
+files in their own browser. **Done for now (v1.0):** the features below, with
+tests passing on every push. New work is planned in `ROADMAP.md`.
+
 **[Open the live test view](https://landstr0m.github.io/timeline-visualiser/web/)**
 (web version, sample data; anything you enter stays in your own browser).
 
@@ -97,3 +103,6 @@ date,end,class,description
 | `ROADMAP.md` | What is done and what comes next |
 | `BUGS.md` | Bug log |
 | `sample_events.csv` | Made-up example data and CSV template |
+| `ruff.toml` | Python formatter and lint settings: `ruff format .` and `ruff check .` |
+| `CHANGELOG.md` | What changed in each release |
+| `LICENSE` | MIT |

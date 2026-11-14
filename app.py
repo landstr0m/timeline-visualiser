@@ -5,6 +5,7 @@ State lives in two browser-side stores:
   view : the visible date range {start, end, n}
 Both are kept in the browser's local storage, so data persists until cleared.
 """
+
 from __future__ import annotations
 
 import base64
@@ -15,8 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
-from dash import (ALL, Dash, Input, Output, State, callback, clientside_callback,
-                  ctx, dash_table, dcc, html, no_update)
+from dash import ALL, Dash, Input, Output, State, callback, clientside_callback, ctx, dash_table, dcc, html, no_update
 
 import timeline as tl
 
@@ -34,63 +34,124 @@ def view_range(view: dict) -> tuple[datetime, datetime]:
 
 
 rows0, _ = tl.rows_from_text(SAMPLE.read_text()) if SAMPLE.exists() else ([], 0)
-btn = {"padding": "6px 10px", "border": "1px solid #c9c8c0", "borderRadius": "6px",
-       "background": "#fff", "cursor": "pointer", "fontSize": "14px"}
+btn = {
+    "padding": "6px 10px",
+    "border": "1px solid #c9c8c0",
+    "borderRadius": "6px",
+    "background": "#fff",
+    "cursor": "pointer",
+    "fontSize": "14px",
+}
 bar = {"display": "flex", "flexWrap": "wrap", "gap": "6px", "alignItems": "center", "margin": "8px 0"}
 
 app = Dash(__name__, title="Timeline Visualiser")
-app.layout = html.Div(style={"fontFamily": "Segoe UI, Helvetica, Arial, sans-serif",
-                             "maxWidth": "1400px", "margin": "0 auto", "padding": "12px"}, children=[
-    dcc.Store(id="rows", data=rows0, storage_type="local"),  # sample only until the user has data
-    dcc.Store(id="view", storage_type="local"),
-    dcc.Store(id="width", data=1100),
-    dcc.Interval(id="tick", interval=1500),
-    dcc.Download(id="download"),
-    html.H2("Timeline Visualiser", style={"margin": "0 0 4px"}),
-    html.Div(style=bar, children=[
-        dcc.Input(id="title", placeholder="Timeline title (optional)", debounce=True, persistence=True,
-                  style={**btn, "cursor": "text", "width": "260px"}),
-        dcc.Checklist(id="show", options=["Timeline", "Table"], value=["Timeline", "Table"], inline=True,
-                      inputStyle={"marginRight": "4px"}, labelStyle={"marginRight": "12px"}),
-    ]),
-    html.Div(style=bar, children=[
-        html.Button("◀", id="prev", style=btn, title="Earlier"),
-        html.Button("▶", id="next", style=btn, title="Later"),
-        html.Button("Today", id="today", style=btn),
-        html.Button("First event", id="first", style=btn),
-        html.Span("Zoom:", style={"marginLeft": "10px"}),
-        *[html.Button(name, id={"zoom": days}, style=btn) for name, days in ZOOMS.items()],
-        html.Button("Capture PNG", id="capture", style={**btn, "marginLeft": "10px", "fontWeight": "600"}),
-    ]),
-    html.Div(id="timeline-box", children=dcc.Graph(
-        id="graph", config={"scrollZoom": True, "displayModeBar": False, "doubleClick": False})),
-    html.Div(id="caption", style={"color": "#6b6a62", "margin": "6px 0"}),
-    html.Div(id="table-box", children=[
-        html.Div(style=bar, children=[
-            html.Button("Add row", id="add", style=btn),
-            dcc.Upload(html.Button("Load CSV / Excel", style=btn), id="upload", accept=".csv,.tsv,.txt,.xlsx"),
-            html.Button("Download CSV", id="save", style=btn),
-            html.Button("Clear all", id="clear", style=btn),
-            html.Span(id="status", style={"color": "#6b6a62"}),
-        ]),
-        dash_table.DataTable(
-            id="table", editable=True, row_deletable=True,
-            columns=[{"name": "Start (YYYY-MM-DD)", "id": "date"}, {"name": "End (optional)", "id": "end"},
-                     {"name": "Class", "id": "class"},
-                     {"name": "Description", "id": "description"}],
-            style_cell={"textAlign": "left", "padding": "6px", "fontFamily": "Segoe UI, Helvetica, Arial, sans-serif", "fontSize": "14px",
-                        "whiteSpace": "normal", "height": "auto"},
-            style_cell_conditional=[{"if": {"column_id": "date"}, "width": "150px"}, {"if": {"column_id": "end"}, "width": "130px"},
-                                    {"if": {"column_id": "class"}, "width": "160px", "fontWeight": "600"}],
-            style_header={"fontWeight": "600", "backgroundColor": "#f3f2ee"}),
-        html.Details(style={"marginTop": "10px"}, children=[
-            html.Summary("Paste rows from Excel or CSV"),
-            dcc.Textarea(id="paste", style={"width": "100%", "height": "110px", "marginTop": "6px"},
-                         placeholder="date, class, description  or  start, end, class, description - one per line (tab or comma separated)"),
-            html.Button("Add pasted rows", id="paste-add", style=btn),
-        ]),
-    ]),
-])
+app.layout = html.Div(
+    style={
+        "fontFamily": "Segoe UI, Helvetica, Arial, sans-serif",
+        "maxWidth": "1400px",
+        "margin": "0 auto",
+        "padding": "12px",
+    },
+    children=[
+        dcc.Store(id="rows", data=rows0, storage_type="local"),  # sample only until the user has data
+        dcc.Store(id="view", storage_type="local"),
+        dcc.Store(id="width", data=1100),
+        dcc.Interval(id="tick", interval=1500),
+        dcc.Download(id="download"),
+        html.H2("Timeline Visualiser", style={"margin": "0 0 4px"}),
+        html.Div(
+            style=bar,
+            children=[
+                dcc.Input(
+                    id="title",
+                    placeholder="Timeline title (optional)",
+                    debounce=True,
+                    persistence=True,
+                    style={**btn, "cursor": "text", "width": "260px"},
+                ),
+                dcc.Checklist(
+                    id="show",
+                    options=["Timeline", "Table"],
+                    value=["Timeline", "Table"],
+                    inline=True,
+                    inputStyle={"marginRight": "4px"},
+                    labelStyle={"marginRight": "12px"},
+                ),
+            ],
+        ),
+        html.Div(
+            style=bar,
+            children=[
+                html.Button("◀", id="prev", style=btn, title="Earlier"),
+                html.Button("▶", id="next", style=btn, title="Later"),
+                html.Button("Today", id="today", style=btn),
+                html.Button("First event", id="first", style=btn),
+                html.Span("Zoom:", style={"marginLeft": "10px"}),
+                *[html.Button(name, id={"zoom": days}, style=btn) for name, days in ZOOMS.items()],
+                html.Button("Capture PNG", id="capture", style={**btn, "marginLeft": "10px", "fontWeight": "600"}),
+            ],
+        ),
+        html.Div(
+            id="timeline-box",
+            children=dcc.Graph(id="graph", config={"scrollZoom": True, "displayModeBar": False, "doubleClick": False}),
+        ),
+        html.Div(id="caption", style={"color": "#6b6a62", "margin": "6px 0"}),
+        html.Div(
+            id="table-box",
+            children=[
+                html.Div(
+                    style=bar,
+                    children=[
+                        html.Button("Add row", id="add", style=btn),
+                        dcc.Upload(
+                            html.Button("Load CSV / Excel", style=btn), id="upload", accept=".csv,.tsv,.txt,.xlsx"
+                        ),
+                        html.Button("Download CSV", id="save", style=btn),
+                        html.Button("Clear all", id="clear", style=btn),
+                        html.Span(id="status", style={"color": "#6b6a62"}),
+                    ],
+                ),
+                dash_table.DataTable(
+                    id="table",
+                    editable=True,
+                    row_deletable=True,
+                    columns=[
+                        {"name": "Start (YYYY-MM-DD)", "id": "date"},
+                        {"name": "End (optional)", "id": "end"},
+                        {"name": "Class", "id": "class"},
+                        {"name": "Description", "id": "description"},
+                    ],
+                    style_cell={
+                        "textAlign": "left",
+                        "padding": "6px",
+                        "fontFamily": "Segoe UI, Helvetica, Arial, sans-serif",
+                        "fontSize": "14px",
+                        "whiteSpace": "normal",
+                        "height": "auto",
+                    },
+                    style_cell_conditional=[
+                        {"if": {"column_id": "date"}, "width": "150px"},
+                        {"if": {"column_id": "end"}, "width": "130px"},
+                        {"if": {"column_id": "class"}, "width": "160px", "fontWeight": "600"},
+                    ],
+                    style_header={"fontWeight": "600", "backgroundColor": "#f3f2ee"},
+                ),
+                html.Details(
+                    style={"marginTop": "10px"},
+                    children=[
+                        html.Summary("Paste rows from Excel or CSV"),
+                        dcc.Textarea(
+                            id="paste",
+                            style={"width": "100%", "height": "110px", "marginTop": "6px"},
+                            placeholder="date, class, description  or  start, end, class, description - one per line (tab or comma separated)",
+                        ),
+                        html.Button("Add pasted rows", id="paste-add", style=btn),
+                    ],
+                ),
+            ],
+        ),
+    ],
+)
 
 
 # Measure the graph width so label layout matches the real screen.
@@ -100,7 +161,10 @@ clientside_callback(
         const w = el && el.offsetWidth ? el.offsetWidth : old;
         return w === old ? window.dash_clientside.no_update : w;
     }""",
-    Output("width", "data"), Input("tick", "n_intervals"), State("width", "data"))
+    Output("width", "data"),
+    Input("tick", "n_intervals"),
+    State("width", "data"),
+)
 
 # Capture: save the timeline exactly as shown, at 2x resolution.
 clientside_callback(
@@ -109,13 +173,22 @@ clientside_callback(
         if (n && gd) Plotly.downloadImage(gd, {format: 'png', scale: 2, filename: 'timeline'});
         return window.dash_clientside.no_update;
     }""",
-    Output("capture", "title"), Input("capture", "n_clicks"))
+    Output("capture", "title"),
+    Input("capture", "n_clicks"),
+)
 
 
-@callback(Output("view", "data"),
-          Input("graph", "relayoutData"), Input("prev", "n_clicks"), Input("next", "n_clicks"),
-          Input("today", "n_clicks"), Input("first", "n_clicks"), Input({"zoom": ALL}, "n_clicks"),
-          Input("rows", "data"), State("view", "data"))
+@callback(
+    Output("view", "data"),
+    Input("graph", "relayoutData"),
+    Input("prev", "n_clicks"),
+    Input("next", "n_clicks"),
+    Input("today", "n_clicks"),
+    Input("first", "n_clicks"),
+    Input({"zoom": ALL}, "n_clicks"),
+    Input("rows", "data"),
+    State("view", "data"),
+)
 def update_view(relayout, _p, _n, _t, _f, _z, rows, view):
     """Every pan, zoom and button press ends up here and sets the visible range."""
     if view is None:  # first ever run: one month around the data
@@ -147,12 +220,23 @@ def update_view(relayout, _p, _n, _t, _f, _z, rows, view):
     return view_dict(start, end, view["n"] + 1)  # n forces a redraw even if clamped back
 
 
-@callback(Output("rows", "data"), Output("status", "children"), Output("paste", "value"),
-          Input("table", "data_timestamp"), Input("add", "n_clicks"), Input("upload", "contents"),
-          Input("paste-add", "n_clicks"), Input("clear", "n_clicks"),
-          State("table", "data"), State("table", "data_previous"), State("rows", "data"),
-          State("view", "data"), State("upload", "filename"), State("paste", "value"),
-          prevent_initial_call=True)
+@callback(
+    Output("rows", "data"),
+    Output("status", "children"),
+    Output("paste", "value"),
+    Input("table", "data_timestamp"),
+    Input("add", "n_clicks"),
+    Input("upload", "contents"),
+    Input("paste-add", "n_clicks"),
+    Input("clear", "n_clicks"),
+    State("table", "data"),
+    State("table", "data_previous"),
+    State("rows", "data"),
+    State("view", "data"),
+    State("upload", "filename"),
+    State("paste", "value"),
+    prevent_initial_call=True,
+)
 def update_rows(_ts, _a, contents, _pa, _c, table, previous, rows, view, filename, pasted):
     """Every change to the data ends up here; the result is always sorted."""
     trig, status, paste_out = ctx.triggered_id, "", no_update
@@ -173,7 +257,10 @@ def update_rows(_ts, _a, contents, _pa, _c, table, previous, rows, view, filenam
                 paste_out = ""
         except Exception as err:  # unreadable file: say so, keep existing data
             return no_update, f"Could not read that data ({err}).", no_update
-        key = lambda r: (r["date"], r.get("end") or "", r["class"], r["description"])
+
+        def key(r):
+            return (r["date"], r.get("end") or "", r["class"], r["description"])
+
         seen = {key(r) for r in rows}
         fresh = [r for r in new if key(r) not in seen]
         rows = rows + fresh
@@ -203,10 +290,18 @@ def update_rows(_ts, _a, contents, _pa, _c, table, previous, rows, view, filenam
     return tl.sort_rows(rows), status, paste_out
 
 
-@callback(Output("graph", "figure"), Output("table", "data"), Output("caption", "children"),
-          Output("timeline-box", "style"), Output("table-box", "style"),
-          Input("rows", "data"), Input("view", "data"), Input("width", "data"),
-          Input("show", "value"), Input("title", "value"))
+@callback(
+    Output("graph", "figure"),
+    Output("table", "data"),
+    Output("caption", "children"),
+    Output("timeline-box", "style"),
+    Output("table-box", "style"),
+    Input("rows", "data"),
+    Input("view", "data"),
+    Input("width", "data"),
+    Input("show", "value"),
+    Input("title", "value"),
+)
 def render(rows, view, width, show, title):
     """Redraw the timeline and filter the table to the visible range."""
     if view is None:
@@ -218,12 +313,10 @@ def render(rows, view, width, show, title):
     drawable = [r for r in rows if r["class"] or r["description"]]
     fig = tl.build_figure(drawable, start, end, width or 1100, title or "")
     hide = {"display": "none"}
-    return (fig, visible, caption,
-            {} if "Timeline" in show else hide, {} if "Table" in show else hide)
+    return (fig, visible, caption, {} if "Timeline" in show else hide, {} if "Table" in show else hide)
 
 
-@callback(Output("download", "data"), Input("save", "n_clicks"), State("rows", "data"),
-          prevent_initial_call=True)
+@callback(Output("download", "data"), Input("save", "n_clicks"), State("rows", "data"), prevent_initial_call=True)
 def download_csv(_n, rows):
     return {"content": tl.to_csv(rows), "filename": "timeline_events.csv"}
 
