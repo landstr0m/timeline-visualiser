@@ -81,6 +81,9 @@ pages), the web version still works but forgets on reload.
 - **Dates only, no times.** Events sit at the start of their day.
 - **Web version has no dependencies** (vanilla JS, SVG, canvas for the PNG) so
   it runs from a file, offline, or inside an iframe on a locked-down page.
+- **One test command covers both versions.** `tests/test_web.py` runs the web
+  page's data functions in Node and compares them with `timeline.py`, so the
+  versions cannot drift apart unnoticed. It runs on every push.
 - **The exe is built by GitHub Actions on Windows**, because PyInstaller can
   only build for the system it runs on. Binaries are not stored in the repo.
 
@@ -97,7 +100,6 @@ pages), the web version still works but forgets on reload.
 - The mouse wheel zooms; sideways scrolling is by drag or the arrow buttons.
 - Single user, local use. Not hardened for hosting on a shared server.
 
-## Possible next steps
+## Next steps
 
-Time-of-day events, per-class show/hide, saving several
-named timelines, wheel-to-scroll option.
+See `ROADMAP.md`.

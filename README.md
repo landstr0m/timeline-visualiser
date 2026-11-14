@@ -89,7 +89,11 @@ date,end,class,description
 | `timeline.py` | Data cleaning, label and band layout, figure drawing; no web code |
 | `web/index.html` | The whole web version |
 | `tests/test_timeline.py` | Unit tests: `python -m pytest` |
+| `tests/test_web.py` | Checks the web version reads and writes CSV exactly like Python (needs Node; skipped without it) |
 | `docs/DESIGN.md` | Requirements, design decisions, known limits |
 | `CLAUDE.md` | Project notes and standards for AI-assisted work |
+| `.github/workflows/tests.yml` | Runs all tests on every push |
 | `.github/workflows/build-exe.yml` | Builds the Windows exe |
+| `ROADMAP.md` | What is done and what comes next |
+| `BUGS.md` | Bug log |
 | `sample_events.csv` | Made-up example data and CSV template |

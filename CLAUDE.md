@@ -11,7 +11,7 @@ capture. Three deliverables share one behaviour:
 
 ## Commands
 - Run: `python app.py` (http://127.0.0.1:8050)
-- Test: `python -m pytest -q`
+- Test: `python -m pytest -q` (includes the web/Python parity check; needs Node)
 - Web: open `web/index.html` directly; no build step.
 
 ## Standards
@@ -29,7 +29,7 @@ capture. Three deliverables share one behaviour:
   8th share neutral grey. Label text stays dark; only lines/bands carry colour.
 - Sample data must be invented. Never commit real workplace or client data,
   including in screenshots.
-- Update `README.md` and `docs/DESIGN.md` in the same commit as the change.
+- Update `README.md`, `docs/DESIGN.md` and `ROADMAP.md` in the same commit as the change; log bugs in `BUGS.md`.
 
 ## Verifying a change
 1. `python -m pytest -q`.
@@ -40,4 +40,4 @@ capture. Three deliverables share one behaviour:
 4. The exe cannot be built off Windows: check the GitHub Actions run.
 
 ## Known limits / ideas
-See `docs/DESIGN.md`.
+Limits: `docs/DESIGN.md`. Plans: `ROADMAP.md`. Bugs: `BUGS.md`.
