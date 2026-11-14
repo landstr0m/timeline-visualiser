@@ -163,7 +163,7 @@ def rows_from_excel(content: bytes) -> tuple[list[dict], int]:
 
 
 def to_csv(rows: list[dict]) -> str:
-    return pd.DataFrame(sort_rows(rows), columns=COLUMNS).to_csv(index=False)
+    return pd.DataFrame(sort_rows(rows), columns=COLUMNS).to_csv(index=False, lineterminator="\n")
 
 
 def class_colours(rows: list[dict]) -> dict[str, str]:
