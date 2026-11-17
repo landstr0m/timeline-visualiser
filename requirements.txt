@@ -1,3 +1,4 @@
-dash>=3.0
-pandas>=2.0
-openpyxl>=3.1
+# Upper bounds stop a new major version breaking the exe build unnoticed; raise them after testing.
+dash>=3.0,<5
+pandas>=2.0,<4
+openpyxl>=3.1,<4
