@@ -6,40 +6,70 @@
 <title>Timeline Visualiser</title>
 <!-- Timeline Visualiser - web version. One self-contained file, no libraries, no network.
      Open it directly, host it, or embed it:  <iframe src="index.html" width="100%" height="800"></iframe>
-     Mirrors the Python version (timeline.py / app.py); keep the two in step. -->
+     Mirrors the Python version (timeline.py / figure.py / app.py); keep them in step.
+
+     Script layout (search for the "----" headings):
+       constants, data, edits+filter, view, text, ticks   pure functions, no page access;
+                                                          tests/test_web.py runs these in Node
+       state      what is stored: rows, view, filters, undo list
+       layout     label and band lanes (measures text, so needs a browser)
+       draw       builds the SVG; drawTable builds the table; render() calls both
+       controls   buttons, drag, wheel, table edits, load, save, capture -->
 <style>
   body { font-family: "Segoe UI", Helvetica, Arial, sans-serif; color: #1a1a19; margin: 0; padding: 12px; background: #fff; }
   h2 { margin: 0 0 4px; }
   .bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; }
-  button, .btn, input[type=text] { padding: 6px 10px; border: 1px solid #c9c8c0; border-radius: 6px; background: #fff; font: inherit; font-size: 14px; }
+  button, .btn, input[type=text], input[type=search], select { padding: 6px 10px; border: 1px solid #c9c8c0; border-radius: 6px; background: #fff; font: inherit; font-size: 14px; color: inherit; }
   button, .btn { cursor: pointer; }
+  button:focus-visible, .btn:focus-within, input:focus-visible, select:focus-visible { outline: 2px solid #2a78d6; outline-offset: 1px; }
   #capture { font-weight: 600; margin-left: 10px; }
   #svg { display: block; touch-action: none; cursor: grab; user-select: none; }
   .muted { color: #6b6a62; }
+  /* class chips: click to hide or show a class */
+  .chip { border-radius: 999px; padding: 3px 10px 3px 8px; font-size: 13px; }
+  .chip .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+  .chip.off { opacity: 0.45; text-decoration: line-through; }
+  .scroll { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; }
   th, td { border: 1px solid #dddcd5; padding: 3px; text-align: left; }
-  th { background: #f3f2ee; padding: 6px; font-size: 14px; }
-  td input { width: 100%; box-sizing: border-box; border: 0; padding: 5px; font: inherit; font-size: 14px; background: transparent; }
+  th { background: #f3f2ee; padding: 6px; font-size: 14px; white-space: nowrap; }
+  td input, td input[type=text] { width: 100%; box-sizing: border-box; border: 0; padding: 5px; font: inherit; font-size: 14px; background: transparent; }
   td input.cls { font-weight: 600; }
-  td.del { width: 28px; text-align: center; }
-  td.del button { border: 0; padding: 2px 6px; }
+  td.when { white-space: nowrap; }
+  td.when input { width: auto; }
+  td.when input.empty:not(:focus) { opacity: 0.35; }   /* an unused time box stays in the background */
+  td.gap { font-size: 13px; white-space: nowrap; padding: 3px 6px; }
+  td.act { white-space: nowrap; text-align: center; }
+  td.act button { border: 0; padding: 2px 5px; background: transparent; }
+  tr.key td { background: #fff8e1; }
   textarea { width: 100%; height: 110px; box-sizing: border-box; margin: 6px 0; }
 </style>
 </head>
 <body>
 <h2>Timeline Visualiser</h2>
+<!-- Row 1: title and which panels to show -->
 <div class="bar">
   <input type="text" id="title" placeholder="Timeline title (optional)" style="width:260px">
   <label><input type="checkbox" id="showTl" checked> Timeline</label>
   <label><input type="checkbox" id="showTb" checked> Table</label>
+  <label title="Show times, owner, source and other optional columns"><input type="checkbox" id="showDt"> Details</label>
 </div>
+<!-- Row 2: moving through time, and pictures -->
 <div class="bar">
   <button id="prev" title="Earlier">◀</button><button id="next" title="Later">▶</button>
   <button id="today">Today</button><button id="first">First event</button>
+  <button id="fit" title="Show every event (up to six months)">Fit all</button>
   <span style="margin-left:10px">Zoom:</span>
-  <button data-zoom="7">1 week</button><button data-zoom="14">2 weeks</button><button data-zoom="31">1 month</button>
-  <button data-zoom="92">3 months</button><button data-zoom="184">6 months</button>
+  <button data-zoom="1">1 day</button><button data-zoom="7">1 week</button><button data-zoom="14">2 weeks</button>
+  <button data-zoom="31">1 month</button><button data-zoom="92">3 months</button><button data-zoom="184">6 months</button>
   <button id="capture">Capture PNG</button>
+  <button id="copy" title="Copy the picture to the clipboard">Copy PNG</button>
+</div>
+<!-- Row 3: filters. They change what is shown, never the stored data -->
+<div class="bar">
+  <input type="search" id="search" placeholder="Search events" style="width:180px">
+  <select id="pick" title="Timeline" hidden></select>
+  <span id="chips" class="bar" style="margin:0"></span>
 </div>
 <div id="tl"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
 <div id="caption" class="muted" style="margin:6px 0"></div>
@@ -48,13 +78,14 @@
     <button id="add">Add row</button>
     <label class="btn">Load CSV<input type="file" id="file" accept=".csv,.tsv,.txt" hidden></label>
     <button id="save">Download CSV</button>
+    <button id="undo" title="Take back the last change to the events">Undo</button>
     <button id="clear">Clear all</button>
-    <span id="status" class="muted"></span>
+    <span id="status" class="muted" role="status"></span>
   </div>
-  <table>
-    <thead><tr><th></th><th style="width:140px">Start</th><th style="width:140px">End (optional)</th><th style="width:170px">Class</th><th>Description</th></tr></thead>
+  <div class="scroll"><table>
+    <thead id="head"></thead>
     <tbody id="rows"></tbody>
-  </table>
+  </table></div>
   <details style="margin-top:10px">
     <summary>Paste rows from Excel or CSV</summary>
     <textarea id="paste" placeholder="date, class, description  or  start, end, class, description - one per line (tab or comma separated)"></textarea>
@@ -65,7 +96,8 @@
 <script>
 "use strict";
 // ------------------------------------------------------------ constants ----
-const DAY = 864e5, MIN_DAYS = 7, MAX_DAYS = 184;
+// Same values as timeline.py. tests/test_web.py fails if they drift apart.
+const DAY = 864e5, MIN_DAYS = 1, MAX_DAYS = 184;
 const PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
 const OTHER = "#8a897f", INK = "#1a1a19", MUTED = "#6b6a62", GRID = "#e6e5df";
 const FONT = '"Segoe UI", Helvetica, Arial, sans-serif';
@@ -73,31 +105,46 @@ const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const LEVELS = [[34, 2], [24, 1], [0, 0]];   // label detail: [wrap width, description lines]
 const LINE_PX = 16, LANE_GAP = 10, MAX_LANES = 5, BAND_PX = 28;
+const DAILY_PX = 22, HOUR_STEPS = [1, 2, 3, 6, 12], HOUR_TICK_PX = 44;
+const KEY_MARK = "★ ", TRUTHY = ["yes", "y", "true", "1", "x", "key", "★"];
+const COLUMNS = ["date", "end", "class", "description"];                   // always written to CSV
+const EXTRAS = ["id", "timeline", "owner", "source", "depends_on", "key"];  // written only when used
+const field = c => c === "id" ? "ref" : c;                                 // CSV column name -> row field
+const EXTRA_FIELDS = EXTRAS.map(field);
+const UNDO_DEPTH = 10;
 const ALIASES = { date: "date", day: "date", when: "date", start: "date", "start date": "date", from: "date",
   end: "end", "end date": "end", finish: "end", to: "end", until: "end",
   class: "class", title: "class", type: "class", category: "class",
   description: "description", desc: "description", details: "description", text: "description",
-  activity: "activity", event: "activity" };
-const SAMPLE = `date,end,class,description
-2026-11-03,2026-11-27,Phase,Investigation
-2026-11-03,,Decision,Review board confirms scope of investigation
-2026-11-06,2026-11-12,Hold,Equipment on hold
-2026-11-06,,Results,Buffer recirculation data expected
-2026-11-06,,Review,Draft report circulated
-2026-11-10,,Results,Post-cleaning samples expected
-2026-11-12,,Approval,Updated protocols
-2026-11-12,,Approval,Associated validation documents
-2026-11-13,2026-12-18,Phase,Production campaign
-2026-11-13,,Production,Batch 3 filtration
-2026-11-13,,Production,Batch 4 harvest
-2026-11-16,,Production,Batch 4 capture step
-2026-11-20,,Results,Water loop sampling data
-2026-11-27,,Decision,Review board closes investigation
-2026-12-04,,Review,Lessons-learned session
-2026-12-15,,Approval,Final report`;
+  activity: "activity", event: "activity",
+  id: "ref", ref: "ref", timeline: "timeline", owner: "owner", who: "owner", responsible: "owner",
+  source: "source", reference: "source", evidence: "source", depends_on: "depends_on", "depends on": "depends_on",
+  key: "key", important: "key" };
+// Must stay identical to sample_events.csv (checked by tests/test_web.py).
+const SAMPLE = `date,end,class,description,owner,source,key
+2026-11-03,2026-11-27,Phase,Investigation,,,
+2026-11-03 09:15,,Deviation,Temperature alarm on buffer tank,Operator A,Alarm log,yes
+2026-11-03 11:40,,Decision,Review board confirms scope of investigation,QA lead,,
+2026-11-06,2026-11-12,Hold,Equipment on hold,,,
+2026-11-06,,Results,Buffer recirculation data expected,Lab,,
+2026-11-06,,Review,Draft report circulated,,,
+2026-11-10,,Results,Post-cleaning samples expected,Lab,,
+2026-11-12,,Approval,Updated protocols,,,
+2026-11-12,,Approval,Associated validation documents,,,
+2026-11-13,2026-12-18,Phase,Production campaign,,,
+2026-11-13,,Production,Batch 3 filtration,,,
+2026-11-13,,Production,Batch 4 harvest,,,
+2026-11-16,,Production,Batch 4 capture step,,,
+2026-11-20,,Results,Water loop sampling data,Lab,,
+2026-11-27,,Decision,Review board closes investigation,QA lead,,yes
+2026-12-04,,Review,Lessons-learned session,,,
+2026-12-15,,Approval,Final report,,,
+2027-01-12,,Production,Batch 6 start,,,
+`;
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pad2 = n => String(n).padStart(2, "0");
 // Local storage can be blocked (e.g. sandboxed iframes): fall back to memory only.
 const store = {
   get(k, d) { try { const v = localStorage.getItem("tv_" + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -105,14 +152,25 @@ const store = {
 };
 
 // ----------------------------------------------------------------- data ----
-// Dates are whole-day numbers (days since 1970, UTC) so time zones never shift them.
-const iso = n => new Date(n * DAY).toISOString().slice(0, 10);
-const num = s => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)) / DAY;
+// A moment is stored as text: "YYYY-MM-DD" or "YYYY-MM-DD HH:MM" (called `when`).
+// For arithmetic it becomes a day number: whole days since 1970 (UTC, so time zones
+// never shift it) plus a fraction for the time of day.
+const iso = n => new Date(Math.floor(n) * DAY).toISOString().slice(0, 10);
+const hasTime = w => w.length > 10;
+const num = w => Date.UTC(+w.slice(0, 4), +w.slice(5, 7) - 1, +w.slice(8, 10)) / DAY
+  + (hasTime(w) ? (+w.slice(11, 13) * 60 + +w.slice(14, 16)) / 1440 : 0);
+function numWhen(n) {   // inverse of num, rounded to the minute
+  const m = Math.round(n * 1440), d = Math.floor(m / 1440), r = m - d * 1440;
+  return iso(d) + (r ? ` ${pad2(Math.floor(r / 60))}:${pad2(r % 60)}` : "");
+}
 const todayNum = () => { const t = new Date(); return Date.UTC(t.getFullYear(), t.getMonth(), t.getDate()) / DAY; };
-const fmt = n => { const t = new Date(n * DAY); return `${String(t.getUTCDate()).padStart(2, "0")} ${MON[t.getUTCMonth()]} ${t.getUTCFullYear()}`; };
+const nowNum = () => { const t = new Date(); return todayNum() + (t.getHours() * 60 + t.getMinutes()) / 1440; };
+function fmtWhen(w, weekday) {   // "06 Nov 2026", with "Fri " in front and " 14:30" behind when asked for / present
+  const t = new Date(num(w.slice(0, 10)) * DAY);
+  return (weekday ? DOW[t.getUTCDay()] + " " : "") + `${pad2(t.getUTCDate())} ${MON[t.getUTCMonth()]} ${t.getUTCFullYear()}` + w.slice(10);
+}
 
-function parseDate(value) {   // returns a day number or null
-  const s = String(value ?? "").trim();
+function parseDay(s) {   // a date without a time -> day number or null
   const year = y => y == null ? new Date().getFullYear() : (+y < 100 ? 2000 + +y : +y);
   const make = (y, m, d) => { const n = Date.UTC(y, m - 1, d) / DAY, t = new Date(n * DAY);
     return t.getUTCMonth() === m - 1 && t.getUTCDate() === d ? n : null; };
@@ -126,11 +184,27 @@ function parseDate(value) {   // returns a day number or null
   return null;
 }
 
-function makeRow(day, cls, description, id, end) {
-  if (end != null && end < day) [day, end] = [end, day];
-  return { id: id || Math.random().toString(36).slice(2, 12), date: iso(day), end: end != null && end !== day ? iso(end) : "",
-    class: String(cls || "").trim().replace(/:\s*$/, "").trim(), description: String(description || "").trim() };
+// Returns "YYYY-MM-DD" or "YYYY-MM-DD HH:MM", or null if unreadable.
+// A 24-hour time may follow any accepted date. 00:00 counts as no time.
+function parseWhen(value) {
+  let s = String(value ?? "").trim(), h = 0, mi = 0;
+  const m = s.match(/^(.*?)[ T]+(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?Z?$/);
+  if (m) { s = m[1].trim(); h = +m[2]; mi = +m[3]; if (h > 23 || mi > 59) return null; }
+  const d = parseDay(s);
+  return d === null ? null : iso(d) + (h || mi ? ` ${pad2(h)}:${pad2(mi)}` : "");
 }
+
+// One event. `day` and `end` are `when` text (end may be null/""); `extra` holds any of EXTRA_FIELDS.
+// A band entered backwards is turned round; an end equal to the start is dropped.
+function makeRow(day, cls, description, id, end, extra = {}) {
+  if (end && num(end) < num(day)) [day, end] = [end, day];
+  const row = { id: id || Math.random().toString(36).slice(2, 12), date: day, end: end && end !== day ? end : "",
+    class: String(cls || "").trim().replace(/:\s*$/, "").trim(), description: String(description || "").trim() };
+  for (const f of EXTRA_FIELDS) row[f] = String(extra[f] ?? "").trim();
+  row.key = TRUTHY.includes(row.key.toLowerCase()) ? "yes" : "";
+  return row;
+}
+// Chronological; ties broken by end, class, description so the order is stable.
 const sortKey = r => [r.date, r.end || "", r.class.toLowerCase(), r.description.toLowerCase()].join("\u0001");
 const sortRows = rs => rs.slice().sort((a, b) => sortKey(a) < sortKey(b) ? -1 : sortKey(a) > sortKey(b) ? 1 : 0);
 
@@ -150,47 +224,131 @@ function parseCSV(text) {   // handles quoted cells; separator is tab, semicolon
   return out.filter(r => r.some(c => c.trim()));
 }
 
-function rowsFromText(text) {   // returns { rows, bad }
+// Pasted or loaded text -> { rows, bad }. A first row whose first cell is not a date is a header
+// and may name any column in ALIASES. Without a header: 2 columns = date + "Class: description",
+// 3 = date, class, description; 4 = date, end, class, description.
+function rowsFromText(text) {
   const table = parseCSV(text.replace(/^﻿/, ""));
   if (!table.length) return { rows: [], bad: 0 };
   let names;
-  if (parseDate(table[0][0]) === null) names = table.shift().map((c, i) => ALIASES[c.trim().toLowerCase()] || "_" + i);
-  else names = { 2: ["date", "activity"], 3: ["date", "class", "description"] }[table[0].length] || ["date", "end", "class", "description"];
+  if (parseWhen(table[0][0]) === null) names = table.shift().map((c, i) => ALIASES[c.trim().toLowerCase()] || "_" + i);
+  else names = { 2: ["date", "activity"], 3: ["date", "class", "description"] }[table[0].length] || COLUMNS;
   const rows = []; let bad = 0;
   for (const cells of table) {
     const rec = {}; names.forEach((n, i) => rec[n] = (cells[i] || "").trim());
-    const day = parseDate(rec.date); let cls = rec.class || "", desc = rec.description || "";
+    const day = parseWhen(rec.date); let cls = rec.class || "", desc = rec.description || "";
     if (rec.activity && !cls) { const i = rec.activity.indexOf(":");
       [cls, desc] = i >= 0 ? [rec.activity.slice(0, i), rec.activity.slice(i + 1)] : ["", rec.activity]; }
     if (day === null || !(cls.trim() || desc.trim())) { bad++; continue; }
-    rows.push(makeRow(day, cls, desc, null, parseDate(rec.end)));
+    rows.push(makeRow(day, cls, desc, null, parseWhen(rec.end), rec));
   }
   return { rows: sortRows(rows), bad };
 }
 
+// All rows in date order. Optional columns appear only if some row uses them,
+// so a plain 4-column file is written back as a plain 4-column file.
 function toCSV(rs) {
   const q = s => /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  return ["date,end,class,description", ...sortRows(rs).map(r => [r.date, r.end || "", r.class, r.description].map(q).join(","))].join("\n") + "\n";
+  const cols = COLUMNS.concat(EXTRAS.filter(c => rs.some(r => r[field(c)])));
+  return [cols.join(","), ...sortRows(rs).map(r => cols.map(c => q(r[field(c)] || "")).join(","))].join("\n") + "\n";
 }
 
 function classColours(rs) {   // colour follows the class name, not what is on screen
   const names = [...new Set(rs.map(r => r.class).filter(Boolean))].sort((a, b) => a.toLowerCase() < b.toLowerCase() ? -1 : 1);
   return Object.fromEntries(names.map((c, i) => [c, i < PALETTE.length ? PALETTE[i] : OTHER]));
 }
-const inView = (rs, lo, hi) => rs.filter(r => num(r.date) <= hi && num(r.end || r.date) >= lo);
+
+// ------------------------------------------------------- edits + filter ----
+// Add loaded or pasted rows, skipping exact duplicates. Returns { rows, fresh }.
+function mergeNew(rs, incoming) {
+  const seen = new Set(rs.map(sortKey)), fresh = incoming.filter(r => !seen.has(sortKey(r)));
+  return { rows: sortRows(rs.concat(fresh)), fresh };
+}
+const timelines = rs => [...new Set(rs.map(r => r.timeline || "").filter(Boolean))].sort((a, b) => a.toLowerCase() < b.toLowerCase() ? -1 : 1);
+// Rows left after hiding classes, picking one timeline and searching (any text field, case ignored).
+function filterRows(rs, hidden = [], timeline = "", text = "") {
+  const needle = (text || "").trim().toLowerCase();
+  return rs.filter(r => !hidden.includes(r.class) && (!timeline || (r.timeline || "") === timeline)
+    && [r.class, r.description, ...EXTRA_FIELDS.slice(0, -1).map(f => r[f] || "")].join(" ").toLowerCase().includes(needle));
+}
+
+// ----------------------------------------------------------------- view ----
+// Events between two day numbers. An event with a time is a point; one without
+// occupies its whole day, so it counts as visible whenever any part of that day is.
+function inSpan(rs, lo, hi) {
+  return rs.filter(r => { const last = r.end || r.date, first = num(r.date), final = num(last) + (hasTime(last) ? 0 : 1);
+    return first <= hi && (final > lo || first >= lo); });
+}
+// [start day number, span in days] that shows every event, or null without rows.
+// 5% is left free before the first event and 10% after the last (labels run right).
+function fitSpan(rs) {
+  if (!rs.length) return null;
+  const lo = Math.min(...rs.map(r => num(r.date))), hi = Math.max(...rs.map(r => num(r.end || r.date)));
+  const span = Math.min(Math.max((hi - lo) / 0.85, MIN_DAYS), MAX_DAYS);
+  return [lo - span * 0.05, span];
+}
+
+// ----------------------------------------------------------------- text ----
+// Elapsed time from a to b: "3 d", "1 d 4 h", "2 h 15 min". Without a time on
+// both sides, whole calendar days are counted.
+function spanText(a, b) {
+  if (!(hasTime(a) && hasTime(b))) return `${num(b.slice(0, 10)) - num(a.slice(0, 10))} d`;
+  const m = Math.round((num(b) - num(a)) * 1440);
+  const parts = [[Math.floor(m / 1440), "d"], [Math.floor(m % 1440 / 60), "h"], [m % 60, "min"]];
+  return parts.filter(p => p[0]).slice(0, 2).map(p => `${p[0]} ${p[1]}`).join(" ") || "0 min";
+}
+// Copy of the rows, in date order, each with `gap`: time since the previous row started.
+function withGaps(rs) {
+  let prev = null;
+  return sortRows(rs).map(r => { const out = { ...r, gap: prev ? "+" + spanText(prev.date, r.date) : "" }; prev = r; return out; });
+}
+// Tooltip: when, class, description, then owner / source / timeline if filled in.
+function tipLines(r) {
+  const when = r.end ? `${fmtWhen(r.date)} – ${fmtWhen(r.end)} (${spanText(r.date, r.end)})` : fmtWhen(r.date, true);
+  const lines = [when, (r.key ? KEY_MARK : "") + (r.class || "Event"), r.description];
+  for (const [label, f] of [["Owner", "owner"], ["Source", "source"], ["Timeline", "timeline"]]) if (r[f]) lines.push(`${label}: ${r[f]}`);
+  return lines;
+}
+// Bold first line of a label: "★ Class · 06 Nov 14:30" (star, date and time only when needed).
+function labelHead(r, showDate) {
+  const extra = showDate ? [fmtWhen(r.date.slice(0, 10)).slice(0, 6)] : [];
+  if (hasTime(r.date)) extra.push(r.date.slice(11));
+  return (r.key ? KEY_MARK : "") + (r.class || "Event") + (extra.length ? " · " + extra.join(" ") : "");
+}
+
+// ---------------------------------------------------------------- ticks ----
+// Axis tick spacing for a zoom level: ["hour", n], ["day", 1], ["week", 1] or ["month", 1].
+function tickStep(ppd) {
+  for (const h of HOUR_STEPS) if (ppd * h / 24 >= HOUR_TICK_PX) return ["hour", h];
+  if (ppd >= DAILY_PX) return ["day", 1];
+  return ppd * 7 >= 50 ? ["week", 1] : ["month", 1];
+}
 
 // ---------------------------------------------------------------- state ----
+// Everything below needs a browser. Stored under "tv_..." in local storage.
+const upgrade = r => makeRow(r.date, r.class, r.description, r.id, r.end, r);   // rows saved by v1.0 lack the optional fields
 let rows = store.get("rows", null);
-if (rows === null) rows = rowsFromText(SAMPLE).rows;   // sample only until the user has data
+rows = rows === null ? rowsFromText(SAMPLE).rows : rows.filter(r => r && r.date).map(upgrade);   // sample only until the user has data
 let view = store.get("view", null);                    // { start: day number (fractional), span: days }
 if (!view) {   // one month: the current month if it has events, else the first event's month
   let t = todayNum();
-  if (rows.length && !rows.some(r => r.date.slice(0, 7) === iso(t).slice(0, 7))) t = num(rows[0].date);
+  if (rows.length && !rows.some(r => r.date.slice(0, 7) === iso(t).slice(0, 7))) t = num(rows[0].date.slice(0, 10));
   view = { start: num(iso(t).slice(0, 8) + "01"), span: 31 };
 }
+let filt = { hidden: [], timeline: "", text: "", ...store.get("filter", {}) };   // what to leave out of the picture and table
+let undoStack = [];                                      // earlier versions of `rows` for Undo; not stored
 $("title").value = store.get("title", "");
-const save = () => { store.set("rows", rows); store.set("view", view); store.set("title", $("title").value); };
+$("search").value = filt.text;
+$("showDt").checked = store.get("details", false);
+const save = () => { store.set("rows", rows); store.set("view", view); store.set("title", $("title").value);
+  store.set("filter", filt); store.set("details", $("showDt").checked); };
 const say = msg => $("status").textContent = msg;
+// Every change to the events goes through here, so Undo always has the previous version.
+function change(next, msg) {
+  next = sortRows(next);
+  if (JSON.stringify(next) !== JSON.stringify(rows)) undoStack = undoStack.concat([rows]).slice(-UNDO_DEPTH);
+  rows = next; say(msg || ""); render();
+}
 
 // --------------------------------------------------------------- layout ----
 const ctx = document.createElement("canvas").getContext("2d");
@@ -213,9 +371,8 @@ function layoutLabels(rs, ppd, showDate) {
   for (const [width, maxLines] of LEVELS) {
     placed = []; const laneEnd = [];
     for (const r of sortRows(rs)) {
-      const x = num(r.date), t = new Date(x * DAY);
-      const head = (r.class || "Event") + (showDate ? ` · ${String(t.getUTCDate()).padStart(2, "0")} ${MON[t.getUTCMonth()]}` : "");
-      const lines = [head, ...(width && r.description ? wrap(r.description, width, maxLines) : [])];
+      const x = num(r.date);
+      const lines = [labelHead(r, showDate), ...(width && r.description ? wrap(r.description, width, maxLines) : [])];
       const px = Math.max(...lines.map((s, i) => textW(s, i === 0))) + 16;
       let lane = laneEnd.findIndex(e => e <= x); if (lane < 0) lane = laneEnd.length;
       laneEnd[lane] = x + px / ppd;
@@ -231,21 +388,26 @@ function layoutBands(rs, ppd, viewStart) {
   const placed = [], laneEnd = [];
   for (const r of sortRows(rs)) {
     const x0 = num(r.date), x1 = num(r.end), labelX = Math.min(Math.max(x0, viewStart), x1);
-    const px = textW(r.class || "Event", true) + textW("  " + r.description, false) + 16;
+    const name = (r.key ? KEY_MARK : "") + (r.class || "Event");
+    const px = textW(name, true) + textW("  " + r.description, false) + 16;
     let lane = laneEnd.findIndex(e => e <= x0); if (lane < 0) lane = laneEnd.length;
     laneEnd[lane] = Math.max(x1, labelX + px / ppd);
-    placed.push({ ...r, lane: lane + 1, x0, x1, labelX });
+    placed.push({ ...r, lane: lane + 1, x0, x1, labelX, name });
   }
   return placed;
 }
 
 // ----------------------------------------------------------------- draw ----
+// Vertical layout, top to bottom: title, legend, "Today" caption, bands, labels, axis, tick text.
+const shownRows = () => filterRows(rows, filt.hidden, timelines(rows).includes(filt.timeline) ? filt.timeline : "", filt.text);
+
 function draw() {
   const W = Math.max($("tl").clientWidth, 300), title = $("title").value.trim();
-  const L = 30, R = 30, pw = W - L - R, ppd = pw / view.span, daily = ppd >= 22;
+  const L = 30, R = 30, pw = W - L - R, ppd = pw / view.span, daily = ppd >= DAILY_PX;
+  const [unit, step] = tickStep(ppd), hourly = unit === "hour";
   const lo = view.start, hi = view.start + view.span, X = d => L + (d - lo) * ppd;
-  const colours = classColours(rows), col = c => colours[c] || OTHER;
-  const shown = inView(rows.filter(r => r.class || r.description), Math.ceil(lo), Math.floor(hi));
+  const colours = classColours(rows), col = c => colours[c] || OTHER;   // from all rows, so filtering never repaints a class
+  const kept = shownRows(), shown = inSpan(kept.filter(r => r.class || r.description), lo, hi);
   const labels = layoutLabels(shown.filter(r => !r.end), ppd, !daily);
   const bands = layoutBands(shown.filter(r => r.end), ppd, lo);
 
@@ -262,41 +424,58 @@ function draw() {
   const nLines = Math.max(1, ...labels.map(p => p.lines.length)), lanePx = nLines * LINE_PX + LANE_GAP;
   const pointsH = 24 + Math.max(0, ...labels.map(p => p.lane)) * lanePx;
   const bandsH = bands.length ? 10 + Math.max(...bands.map(b => b.lane)) * BAND_PX : 0;
-  const top = (title ? 40 : 10) + legH, yAxis = top + bandsH + pointsH, H = yAxis + 46;
+  const headH = (title ? 40 : 10) + legH, top = headH + 14, yAxis = top + bandsH + pointsH, H = yAxis + 46;
   const o = [`<rect width="${W}" height="${H}" fill="#fff"/>`];
   const text = (x, y, s, extra = "") => `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-family='${FONT}' font-size="12" fill="${INK}" ${extra}>${s}</text>`;
+  const grey = `fill="${MUTED}" style="fill:${MUTED}"`;
   if (title) o.push(text(L, 28, esc(title), 'font-size="20" style="font-size:20px"'));
   legRows.forEach((row, i) => { let x = W - R - row.reduce((a, b) => a + b.w, 0);
     for (const it of row) { const y = (title ? 40 : 10) + i * 18 + 10;
       o.push(`<line x1="${x}" x2="${x + 18}" y1="${y}" y2="${y}" stroke="${col(it.name)}" stroke-width="2"/><circle cx="${x + 9}" cy="${y}" r="3.5" fill="${col(it.name)}"/>`,
-        text(x + 23, y + 4, esc(it.name), `fill="${MUTED}" style="fill:${MUTED}"`)); x += it.w; } });
+        text(x + 23, y + 4, esc(it.name), grey)); x += it.w; } });
 
-  // weekends, ticks and grid
-  let first = true;
-  for (let d = Math.floor(lo) - 1; d <= Math.ceil(hi); d++) {
-    const t = new Date(d * DAY), dom = t.getUTCDate(), dow = t.getUTCDay(), mo = t.getUTCMonth(), yr = t.getUTCFullYear(), x = X(d);
-    if (dow === 6 && ppd >= 8) { const a = Math.max(X(d - 0.5), L), b = Math.min(X(d + 1.5), W - R);
-      if (b > a) o.push(`<rect x="${a}" y="${top}" width="${b - a}" height="${yAxis - top}" fill="#f6f5f1"/>`); }
-    if (x < L - 0.5 || x > W - R + 0.5) continue;
-    let l1 = null, l2 = "";
-    if (daily) { l1 = (ppd >= 48 ? DOW[dow] + " " : "") + String(dom).padStart(2, "0"); if (first || dom === 1) l2 = `${MON[mo]} ${yr}`; }
-    else if (ppd * 7 >= 50) { if (dow === 1) { l1 = `${String(dom).padStart(2, "0")} ${MON[mo]}`; if (first || (mo === 0 && dom <= 7)) l2 = yr; } }
-    else if (dom === 1) { l1 = MON[mo]; if (first || mo === 0) l2 = yr; }
-    if (l1 === null) continue;
-    first = false;
-    if (!daily) o.push(`<line x1="${x}" x2="${x}" y1="${top}" y2="${yAxis}" stroke="${GRID}"/>`);
-    o.push(`<line x1="${x}" x2="${x}" y1="${yAxis}" y2="${yAxis + 5}" stroke="${MUTED}"/>`,
-      text(x, yAxis + 19, l1, `text-anchor="middle" fill="${MUTED}" style="fill:${MUTED}"`),
-      l2 ? text(x, yAxis + 35, l2, `text-anchor="middle" fill="${MUTED}" style="fill:${MUTED}"`) : "");
+  // weekends. Date-only events sit on the midnight tick of their day, so at day zoom the stripe is
+  // centred on the Saturday and Sunday ticks; with hour ticks the true weekend is shaded.
+  const shift = hourly ? 0 : 0.5;
+  if (ppd >= 8) for (let d = Math.floor(lo) - 2; d <= Math.ceil(hi); d++) {
+    if (new Date(d * DAY).getUTCDay() !== 6) continue;
+    const a = Math.max(X(d - shift), L), b = Math.min(X(d + 2 - shift), W - R);
+    if (b > a) o.push(`<rect x="${a}" y="${top}" width="${b - a}" height="${yAxis - top}" fill="#f6f5f1"/>`);
   }
+
+  // ticks and grid: one entry per tick = [day number, line 1, line 2, strong grid line?]
+  const ticks = []; let first = true;
+  if (hourly) for (let k = Math.ceil(lo * 24 / step - 1e-6); k * step / 24 <= hi + 1e-6; k++) {
+    const h = ((k * step) % 24 + 24) % 24, d = k * step / 24;
+    ticks.push([d, `${pad2(h)}:00`, first || h === 0 ? fmtWhen(iso(d + 1e-6), true) : "", h === 0]); first = false;
+  }
+  else for (let d = Math.ceil(lo - 1e-6); d <= hi + 1e-6; d++) {
+    const t = new Date(d * DAY), dom = t.getUTCDate(), dow = t.getUTCDay(), mo = t.getUTCMonth(), yr = t.getUTCFullYear();
+    let l1 = null, l2 = "";
+    if (unit === "day") { l1 = (ppd >= 48 ? DOW[dow] + " " : "") + pad2(dom); if (first || dom === 1) l2 = `${MON[mo]} ${yr}`; }
+    else if (unit === "week") { if (dow === 1) { l1 = `${pad2(dom)} ${MON[mo]}`; if (first || (mo === 0 && dom <= 7)) l2 = yr; } }
+    else if (dom === 1) { l1 = MON[mo]; if (first || mo === 0) l2 = yr; }
+    if (l1 !== null) { ticks.push([d, l1, l2, false]); first = false; }
+  }
+  for (const [d, l1, l2, strong] of ticks) {
+    const x = X(d);
+    if (unit !== "day") o.push(`<line x1="${x}" x2="${x}" y1="${top}" y2="${yAxis}" stroke="${strong ? "#c9c8c0" : GRID}"/>`);
+    o.push(`<line x1="${x}" x2="${x}" y1="${yAxis}" y2="${yAxis + 5}" stroke="${MUTED}"/>`,
+      text(x, yAxis + 19, l1, `text-anchor="middle" ${grey}`), l2 ? text(x, yAxis + 35, l2, `text-anchor="${x < L + 40 ? "start" : "middle"}" ${grey}`) : "");
+  }
+
+  // today: on today's tick at day zoom, at the current time with hour ticks
+  const now = hourly ? nowNum() : todayNum();
+  if (now >= lo && now <= hi) o.push(`<line x1="${X(now)}" x2="${X(now)}" y1="${top}" y2="${yAxis}" stroke="${MUTED}" stroke-dasharray="4 3"/>`,
+    text(X(now), top - 4, "Today", `text-anchor="middle" font-size="11" style="font-size:11px;fill:${MUTED}" fill="${MUTED}"`));
 
   // bands (their own strip above the single-date labels)
   for (const b of bands) {
     const x0 = Math.max(X(b.x0), L), x1 = Math.min(X(b.x1), W - R), y = yAxis - pointsH - 10 - b.lane * BAND_PX + 6;
     if (x1 <= x0) continue;
-    const tip = `<title>${esc(`${fmt(b.x0)} – ${fmt(b.x1)}\n${b.class || "Event"}\n${b.description}`)}</title>`;
-    o.push(`<rect x="${x0}" y="${y}" width="${x1 - x0}" height="${BAND_PX - 6}" rx="4" fill="${col(b.class)}" fill-opacity="0.3" stroke="${col(b.class)}" stroke-opacity="0.6">${tip}</rect>`,
-      text(Math.max(X(b.labelX), L) + 6, y + 15, `<tspan font-weight="600">${esc(b.class || "Event")}</tspan>  ${esc(b.description)}${tip}`, 'xml:space="preserve"'));
+    const tip = `<title>${esc(tipLines(b).join("\n"))}</title>`;
+    o.push(`<rect x="${x0}" y="${y}" width="${x1 - x0}" height="${BAND_PX - 6}" rx="4" fill="${col(b.class)}" fill-opacity="0.3" stroke="${col(b.class)}" ${b.key ? 'stroke-width="2.5"' : 'stroke-opacity="0.6"'}>${tip}</rect>`,
+      text(Math.max(X(b.labelX), L) + 6, y + 15, `<tspan font-weight="600">${esc(b.name)}</tspan>  ${esc(b.description)}${tip}`, 'xml:space="preserve"'));
   }
 
   // single-date events: lines first, then labels on white so lines pass behind them
@@ -304,46 +483,79 @@ function draw() {
   const boxY = p => yAxis - 24 - (p.lane - 1) * lanePx - p.lines.length * LINE_PX;
   for (const p of pts) o.push(`<line x1="${X(p.x)}" x2="${X(p.x)}" y1="${yAxis}" y2="${boxY(p) - 2}" stroke="${col(p.class)}" stroke-width="2"/>`);
   for (const p of pts) {
-    const x = X(p.x), y = boxY(p), tip = `<title>${esc(`${DOW[new Date(p.x * DAY).getUTCDay()]} ${fmt(p.x)}\n${p.class || "Event"}\n${p.description}`)}</title>`;
+    const x = X(p.x), y = boxY(p), tip = `<title>${esc(tipLines(p).join("\n"))}</title>`;
     o.push(`<rect x="${x + 2}" y="${y - 2}" width="${p.px - 4}" height="${p.lines.length * LINE_PX + 4}" fill="#fff" fill-opacity="0.92">${tip}</rect>`);
     p.lines.forEach((s, i) => o.push(text(x + 7, y + 12 + i * LINE_PX, esc(s) + tip, i === 0 ? 'font-weight="600"' : "")));
   }
   o.push(`<line x1="${L}" x2="${W - R}" y1="${yAxis}" y2="${yAxis}" stroke="${MUTED}"/>`);
-  for (const p of pts) o.push(`<circle cx="${X(p.x)}" cy="${yAxis}" r="4" fill="${col(p.class)}" stroke="#fff" stroke-width="2"/>`);
+  for (const p of pts.filter(p => !p.key).concat(pts.filter(p => p.key))) {   // marker on the axis: a dot, or a larger diamond for a key event (drawn last, so on top)
+    const x = X(p.x), c = `fill="${col(p.class)}" stroke="#fff" stroke-width="2"`;
+    o.push(p.key ? `<path d="M${x} ${yAxis - 7}L${x + 7} ${yAxis}L${x} ${yAxis + 7}L${x - 7} ${yAxis}Z" ${c}/>` : `<circle cx="${x}" cy="${yAxis}" r="4" ${c}/>`);
+  }
 
   const svg = $("svg");
   svg.setAttribute("width", W); svg.setAttribute("height", H); svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   svg.innerHTML = o.join("");
   svg._ppd = ppd; svg._left = L;
-  const visible = inView(rows, Math.floor(lo), Math.floor(hi));
-  $("caption").textContent = `Showing ${fmt(Math.floor(lo))} – ${fmt(Math.floor(hi))} · ${visible.length} of ${rows.length} events`;
+  const visible = withGaps(inSpan(kept, lo, hi));
+  $("caption").textContent = `Showing ${fmtWhen(hourly ? numWhen(lo) : iso(lo))} – ${fmtWhen(hourly ? numWhen(hi) : iso(hi))} · ${visible.length} of ${rows.length} events`
+    + (kept.length < rows.length ? ` · filter on (${rows.length - kept.length} hidden)` : "");
   return visible;
 }
 
+// The table lists the events in view. Time boxes appear once any event has a time, or with Details.
+const DETAIL_COLS = [["owner", "Owner"], ["source", "Source"], ["timeline", "Timeline"], ["ref", "Id"], ["depends_on", "Depends on"]];
 function drawTable(visible) {
-  const cell = (r, k, type, cls = "") => `<td><input type="${type}" class="${cls}" data-k="${k}" value="${esc(r[k] || "")}"></td>`;
-  $("rows").innerHTML = visible.map(r => `<tr data-id="${r.id}"><td class="del"><button title="Delete">×</button></td>` +
-    cell(r, "date", "date") + cell(r, "end", "date") + cell(r, "class", "text", "cls") + cell(r, "description", "text") + "</tr>").join("");
+  const details = $("showDt").checked, times = details || rows.some(r => hasTime(r.date) || hasTime(r.end));
+  const inp = (k, type, value, cls = "") => `<input type="${type}" class="${cls}" data-k="${k}" value="${esc(value || "")}" aria-label="${k}">`;
+  const when = (r, k) => `<td class="when">${inp(k, "date", r[k].slice(0, 10))}${times ? inp(k + "Time", "time", r[k].slice(11), r[k].slice(11) ? "" : "empty") : ""}</td>`;
+  $("head").innerHTML = `<tr><th></th><th>Start</th><th>End (optional)</th><th title="Time since the previous event started">Gap</th><th style="width:170px">Class</th><th>Description</th>`
+    + (details ? DETAIL_COLS.map(c => `<th>${c[1]}</th>`).join("") : "") + "</tr>";
+  $("rows").innerHTML = visible.map(r => `<tr data-id="${esc(r.id)}" class="${r.key ? "key" : ""}"><td class="act">`
+    + `<button data-act="del" title="Delete">×</button><button data-act="key" title="Key event" aria-pressed="${!!r.key}">${r.key ? "★" : "☆"}</button></td>`
+    + when(r, "date") + when(r, "end") + `<td class="gap muted">${r.gap}</td>`
+    + `<td>${inp("class", "text", r.class, "cls")}</td><td>${inp("description", "text", r.description)}</td>`
+    + (details ? DETAIL_COLS.map(c => `<td>${inp(c[0], "text", r[c[0]])}</td>`).join("") : "") + "</tr>").join("");
 }
+
+// Filter controls: one chip per class (click to hide/show) and a timeline picker when timelines are in use.
+function drawFilters() {
+  const colours = classColours(rows), names = Object.keys(colours), lines = timelines(rows);
+  $("chips").innerHTML = names.length < 2 ? "" : names.map(c => `<button class="chip${filt.hidden.includes(c) ? " off" : ""}" data-class="${esc(c)}" `
+    + `aria-pressed="${!filt.hidden.includes(c)}" title="Show or hide ${esc(c)}"><span class="dot" style="background:${colours[c]}"></span>${esc(c)}</button>`).join("");
+  $("pick").hidden = !lines.length;
+  $("pick").innerHTML = `<option value="">All timelines</option>` + lines.map(t => `<option${t === filt.timeline ? " selected" : ""}>${esc(t)}</option>`).join("");
+}
+
 function render() {   // the only place that redraws: timeline and table can never disagree
   rows = sortRows(rows); save();
   $("tl").style.display = $("showTl").checked ? "" : "none";
   $("tb").style.display = $("showTb").checked ? "" : "none";
+  drawFilters();
   drawTable(draw());
 }
 
 // ------------------------------------------------------------- controls ----
-function setView(start, span) {   // keep the span between one week and six months, same centre
+function setView(start, span) {   // keep the span between one day and six months, same centre
   const clamped = Math.min(Math.max(span, MIN_DAYS), MAX_DAYS);
   view = { start: start + (span - clamped) / 2, span: clamped };
 }
 $("prev").onclick = () => { setView(view.start - view.span / 2, view.span); render(); };
 $("next").onclick = () => { setView(view.start + view.span / 2, view.span); render(); };
-$("today").onclick = () => { setView(todayNum() + 0.5 - view.span / 2, view.span); render(); };
-$("first").onclick = () => { if (rows.length) { setView(num(rows[0].date) - 1, view.span); render(); } };
+$("today").onclick = () => { setView(nowNum() - view.span / 2, view.span); render(); };
+$("first").onclick = () => { if (rows.length) { setView(num(rows[0].date) - view.span / 31, view.span); render(); } };
+$("fit").onclick = () => { const f = fitSpan(shownRows()); if (f) { setView(f[0], f[1]); render(); } };
 document.querySelectorAll("[data-zoom]").forEach(b => b.onclick = () => {
   const span = +b.dataset.zoom; setView(view.start + view.span / 2 - span / 2, span); render(); });
-["title", "showTl", "showTb"].forEach(id => $(id).addEventListener("input", render));
+["title", "showTl", "showTb", "showDt"].forEach(id => $(id).addEventListener("input", render));
+
+// filters
+$("search").addEventListener("input", e => { filt.text = e.target.value; save(); drawTable(draw()); });   // no full render: keeps the cursor in the box
+$("pick").onchange = e => { filt.timeline = e.target.value; render(); };
+$("chips").onclick = e => {
+  const b = e.target.closest("[data-class]"); if (!b) return;
+  const c = b.dataset.class; filt.hidden = filt.hidden.includes(c) ? filt.hidden.filter(x => x !== c) : filt.hidden.concat([c]); render();
+};
 
 // drag to scroll; wheel zooms at the pointer; shift+wheel or sideways wheel scrolls
 const svg = $("svg"); let drag = null, queued = false;
@@ -365,26 +577,38 @@ svg.addEventListener("wheel", e => {
 }, { passive: false });
 new ResizeObserver(redrawSoon).observe($("tl"));
 
-// table edits
+// table edits. The row is rebuilt from all its boxes, then the table is redrawn;
+// focus is put back on the box the user moved to, so tabbing along a row works.
 $("rows").addEventListener("change", e => {
-  const id = e.target.closest("tr").dataset.id, old = rows.find(r => r.id === id), k = e.target.dataset.k;
-  const next = { ...old, [k]: e.target.value };
-  const day = parseDate(next.date);
-  if (day === null) say("A start date is needed - kept the previous date.");
-  else { rows = rows.map(r => r.id === id ? makeRow(day, next.class, next.description, id, parseDate(next.end)) : r); say(""); }
-  render();
+  const tr = e.target.closest("tr"), id = tr.dataset.id, old = rows.find(r => r.id === id);
+  const v = k => { const el = tr.querySelector(`[data-k="${k}"]`); return el ? el.value : null; };
+  const when = k => { const d = v(k), t = v(k + "Time"); return d ? parseWhen(d + (t ? " " + t : "")) : null; };
+  const day = when("date"), extra = { ...old };
+  for (const [f] of DETAIL_COLS) if (v(f) !== null) extra[f] = v(f);
+  setTimeout(() => {   // after the browser has moved focus
+    const a = document.activeElement, at = a && a.closest && a.closest("#rows tr") ? [a.closest("tr").dataset.id, a.dataset.k] : null;
+    if (day === null) { say("A start date is needed - kept the previous date."); render(); }
+    else change(rows.map(r => r.id === id ? makeRow(day, v("class"), v("description"), id, when("end"), extra) : r));
+    const back = at && document.querySelector(`#rows tr[data-id="${at[0]}"] [data-k="${at[1]}"]`);
+    if (back) back.focus();
+  });
 });
 $("rows").addEventListener("click", e => {
-  if (e.target.tagName === "BUTTON") { rows = rows.filter(r => r.id !== e.target.closest("tr").dataset.id); render(); } });
-$("add").onclick = () => { rows.push(makeRow(Math.floor(view.start + view.span / 2), "", "")); say("Blank row added at the middle of the visible range."); render(); };
-$("clear").onclick = () => { rows = []; say("All events cleared."); render(); };
+  const b = e.target.closest("button"); if (!b) return;
+  const id = b.closest("tr").dataset.id;
+  if (b.dataset.act === "del") change(rows.filter(r => r.id !== id), "Event deleted. Undo brings it back.");
+  else change(rows.map(r => r.id === id ? { ...r, key: r.key ? "" : "yes" } : r));
+});
+$("add").onclick = () => change(rows.concat([makeRow(iso(view.start + view.span / 2), "", "")]), "Blank row added at the middle of the visible range.");
+$("clear").onclick = () => change([], "All events cleared. Undo brings them back.");
+$("undo").onclick = () => {
+  if (!undoStack.length) return say("Nothing to undo.");
+  rows = undoStack.pop(); say("Last change undone."); render();
+};
 
 function addRows(text) {
-  const { rows: fresh0, bad } = rowsFromText(text), seen = new Set(rows.map(sortKey));
-  const fresh = fresh0.filter(r => !seen.has(sortKey(r)));
-  rows = rows.concat(fresh);
-  say(`Added ${fresh.length} event(s)` + (bad ? `, skipped ${bad} unreadable row(s).` : ".") + (fresh.length ? ` First is on ${fresh[0].date}.` : ""));
-  render();
+  const { rows: incoming, bad } = rowsFromText(text), { rows: all, fresh } = mergeNew(rows, incoming);
+  change(all, `Added ${fresh.length} event(s)` + (bad ? `, skipped ${bad} unreadable row(s).` : ".") + (fresh.length ? ` First is on ${fresh[0].date}.` : ""));
 }
 $("pasteAdd").onclick = () => { addRows($("paste").value); $("paste").value = ""; };
 $("file").onchange = e => {
@@ -393,20 +617,26 @@ $("file").onchange = e => {
   f.text().then(addRows); e.target.value = "";
 };
 
+// save and pictures
 function download(blob, name) {
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
-$("save").onclick = () => download(new Blob([toCSV(rows)], { type: "text/csv" }), "timeline_events.csv");
-$("capture").onclick = () => {   // the timeline exactly as shown, at 2x resolution
+$("save").onclick = () => download(new Blob([toCSV(rows)], { type: "text/csv" }), "timeline_events.csv");   // all events, whatever the filters show
+function toPng(done) {   // the timeline exactly as shown, at 2x resolution -> PNG blob
   const w = +svg.getAttribute("width"), h = +svg.getAttribute("height"), img = new Image();
   img.onload = () => {
     const c = document.createElement("canvas"); c.width = w * 2; c.height = h * 2;
     const g = c.getContext("2d"); g.scale(2, 2); g.drawImage(img, 0, 0, w, h);
-    c.toBlob(b => download(b, "timeline.png"), "image/png");
+    c.toBlob(done, "image/png");
   };
   img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(svg));
-};
+}
+$("capture").onclick = () => toPng(b => download(b, "timeline.png"));
+$("copy").onclick = () => toPng(b => {   // clipboard access can be refused (old browsers, some embedded pages)
+  try { navigator.clipboard.write([new ClipboardItem({ "image/png": b })]).then(() => say("Picture copied."), () => say("Copy was blocked - use Capture PNG.")); }
+  catch (e) { say("Copy is not available here - use Capture PNG."); }
+});
 
 render();
 </script>

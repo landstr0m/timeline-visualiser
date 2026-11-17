@@ -20,9 +20,32 @@
 | 14 | Web version that can be embedded | `web/index.html` |
 | 15 | Windows executable from the Python version | `.github/workflows/build-exe.yml` |
 | 16 | Data persists until cleared, with option to save | local storage (`rows`, `view` stores); Download CSV |
+| 17 | Time of day on events; zoom to one day | `parse_when`, `when_num`, `tick_step` |
+| 18 | Elapsed time between events | `span_text`, `with_gaps` (Gap column), `tip_lines` |
+| 19 | Key events stand out | `key` field; `label_head`; diamond marker in `figure.py` |
+| 20 | Today line | `_today` in `figure.py` |
+| 21 | Hide classes, pick a timeline, search | `filter_rows`, `timelines` |
+| 22 | Optional columns for owner, source, timeline, id, depends_on | `EXTRAS`, `to_csv`, `rows_from_frame` |
+| 23 | Undo | `undo` store in `update_rows`; `change()` in the web version |
+| 24 | Fit all events in view | `fit_span`, `fit_view` |
+| 25 | Copy the picture to the clipboard | browser-side snippet in `app.py`; `toPng` in the web version |
 
 Function names above are the Python ones; `web/index.html` has the same
 functions in camelCase.
+
+## Comparison with similar tools (Nov 2026)
+
+What comparable tools offer, and what was taken from each for short projects
+and deviation investigations:
+
+| Tool type | Examples | Taken | Left out, and why |
+|---|---|---|---|
+| Timeline components | vis-timeline | Time of day, today line, fit, groups (as the `timeline` filter; swimlanes are next on the roadmap) | Drag-to-edit items: easy to move an event by accident in an investigation record |
+| Presentation timelines | Office Timeline | Milestone (key) markers, today line, copy into a document | Percent complete, templates and themes: clutter for this use |
+| Root-cause-analysis event timelines | GE APM, Causelink | Marking key/contributing events, source of each fact, exact sequence in hours and minutes, elapsed time | Cause trees and action tracking: belongs in the quality system |
+| Story timelines | TimelineJS | Nothing | Media slides; not a working tool |
+
+Kept deliberately: no server, no accounts, one file for the web version.
 
 ## How it fits together
 
@@ -33,7 +56,27 @@ visible date range). Three callbacks do all the work:
     user action -> update_rows -> rows ---+-> render -> figure + filtered table
 
 `render` is the only place that draws, so the timeline and the table can never
-disagree. All logic is in `timeline.py` as plain functions and is unit tested.
+disagree. All logic is in `timeline.py` as plain functions and is unit tested;
+`figure.py` turns its results into a Plotly figure.
+
+A third store, `undo`, holds up to 10 earlier versions of `rows`. Every data
+change passes through `update_rows`, which pushes the previous rows before
+returning the new ones. Filters (search, hidden classes, timeline) are inputs
+to `render` only: they never change `rows`, and Download CSV always writes
+everything.
+
+## Dates and times
+
+A moment is text: `YYYY-MM-DD` or `YYYY-MM-DD HH:MM`. Text in that form sorts
+chronologically, reads back unchanged from CSV, and needs no time-zone
+handling. For arithmetic it becomes a day number with a fraction for the time
+(`when_num`). An event without a time sits on the midnight tick of its day
+and counts as visible whenever any part of that day is in view; an event with
+a time is a point. Elapsed time is given in hours and minutes only when both
+ends have a time, otherwise in whole days.
+
+Axis ticks follow the zoom (`tick_step`): hours (every 1, 2, 3, 6 or 12) when
+there is room, then days, weeks, months.
 
 ## Label layout (requirement 7)
 
@@ -78,6 +121,12 @@ files (missing column = blank, files without them still load):
 | `owner` | Who is responsible for the event |
 | `source` | Which file or system the row came from |
 | `depends_on` | Ids this event follows; moving one shifts its dependants by the same number of days |
+| `key` | `yes` marks a key event |
+
+All six are read, kept, editable under *Details* and written back since
+v1.1.0. `timeline` drives a filter; `id` and `depends_on` are stored only
+(dependencies are on the roadmap). The CSV `id` is held in the row field
+`ref`, because `id` is the table's own internal row key.
 
 Overlaps/clashes are worked out from dates and `timeline`, not stored.
 
@@ -98,11 +147,26 @@ user's machine or in browser storage. The live page and repo are public.
   manual entries are never lost silently. Use *Clear all* first to replace.
 - **An unreadable date typed into the table is rejected** and the previous
   date kept, with a message; unreadable rows in a file are skipped and counted.
-- **Dates only, no times.** Events sit at the start of their day.
+- **Times are optional (v1.1).** Dates alone stay the normal case; a time is
+  added only where the sequence within a day matters. Midnight means "no
+  time", so spreadsheet exports like `2026-11-03 00:00:00` read as plain dates.
+- **Filters hide, they never delete.** A hidden class keeps its colour, and
+  the download is always complete, so a filtered view cannot lose data.
+- **Optional columns are written only when used**, so a file that came in
+  with four columns goes out with four.
+- **Extra columns and time boxes sit behind *Details*** to keep the default
+  table at five columns.
+- **Undo instead of "are you sure?"** Confirm boxes get clicked through;
+  undo fixes the mistake after it is noticed.
+- **Month and weekday names are fixed English** (`MON`, `DOW`), so pictures
+  are identical on machines with different regional settings.
+- **The web version stays one file** although it is past 600 lines, because
+  "send one file to a colleague" is the point of it. Inside, pure functions
+  sit above the `state` heading and are run by the tests.
 - **Web version has no dependencies** (vanilla JS, SVG, canvas for the PNG) so
   it runs from a file, offline, or inside an iframe on a locked-down page.
 - **One test command covers both versions.** `tests/test_web.py` runs the web
-  page's data functions in Node and compares them with `timeline.py`, so the
+  page's pure functions in Node and compares them with `timeline.py`, so the
   versions cannot drift apart unnoticed. It runs on every push.
 - **The exe is built by GitHub Actions on Windows**, because PyInstaller can
   only build for the system it runs on. Binaries are not stored in the repo.
@@ -118,6 +182,14 @@ user's machine or in browser storage. The live page and repo are public.
 - Label width is estimated, not measured, so very wide characters can touch a
   neighbouring label.
 - The mouse wheel zooms; sideways scrolling is by drag or the arrow buttons.
+- An event at exactly 00:00 cannot be entered; use 00:01.
+- The Gap column measures from the start of the previous listed row, bands
+  included; with a filter on, it measures between the rows still shown.
+- Undo history is lost when the page is closed or reloaded.
+- Copy PNG needs a browser that allows clipboard pictures; some embedded
+  pages block it (Capture PNG still works).
+- At day-level zoom a timed event is drawn part-way between two day ticks,
+  while the weekend stripe is centred on the ticks; zoom in for exact reading.
 - Single user, local use. Not hardened for hosting on a shared server.
 
 ## Next steps
