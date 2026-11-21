@@ -3,7 +3,10 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import pytest
+
 import timeline as tl
+from figure import build_figure
 
 
 def test_parse_date_formats():
@@ -74,4 +77,131 @@ def test_bands_parse_overlap_view_and_label_follows_view():
     assert headerless[0]["end"] == "2025-03-20" and headerless[1]["end"] == ""
     band = tl.layout_bands(rows[:1], 30, date(2025, 3, 10).toordinal())[0]
     assert band["label_x"] == date(2025, 3, 10).toordinal()
-    assert tl.build_figure(rows, datetime(2025, 3, 1), datetime(2025, 4, 1)).layout.shapes
+    assert build_figure(rows, datetime(2025, 3, 1), datetime(2025, 4, 1)).layout.shapes
+
+
+# ---- v1.1: times of day, optional columns, filters, gaps, fit, undo helpers ----
+def test_times_of_day_are_read_sorted_and_round_trip():
+    assert tl.parse_when("2025-03-10 14:30") == "2025-03-10 14:30"
+    assert tl.parse_when("10.03.2025 8:05") == "2025-03-10 08:05"
+    assert tl.parse_when("2025-03-10T14:30:00") == "2025-03-10 14:30"
+    assert tl.parse_when("10-Mar-2025 00:00") == "2025-03-10"  # midnight = no time
+    assert tl.parse_when(datetime(2025, 3, 10, 8)) == "2025-03-10 08:00"
+    assert tl.parse_when("2025-03-10 25:00") is None
+    rows, _ = tl.rows_from_text("2025-03-10 14:30,A,late\n2025-03-10,A,whole day\n2025-03-10 09:00,A,early\n")
+    assert [r["description"] for r in rows] == ["whole day", "early", "late"]
+    again, _ = tl.rows_from_text(tl.to_csv(rows))
+    assert [r["date"] for r in again] == [r["date"] for r in rows]
+    assert tl.num_when(tl.when_num("2025-03-10 14:30")) == "2025-03-10 14:30"
+
+
+def test_optional_columns_kept_and_plain_files_stay_plain():
+    plain, _ = tl.rows_from_text("2025-03-10,Results,x\n")
+    assert tl.to_csv(plain).splitlines()[0] == "date,end,class,description"
+    text = "date,class,description,owner,key,id,source\n2025-03-10,Results,x,Ana,Y,E1,Batch record p4\n2025-03-11,Results,y,,,,\n"
+    rows, _ = tl.rows_from_text(text)
+    assert (rows[0]["owner"], rows[0]["key"], rows[0]["ref"], rows[0]["source"]) == (
+        "Ana",
+        "yes",
+        "E1",
+        "Batch record p4",
+    )
+    out = tl.to_csv(rows)
+    assert out.splitlines()[0] == "date,end,class,description,id,owner,source,key"
+    again, _ = tl.rows_from_text(out)
+    assert tl.to_csv(again) == out
+
+
+def test_filter_by_class_timeline_and_text():
+    rows, _ = tl.rows_from_text(
+        "date,class,description,timeline,owner\n2025-03-10,Results,pH data,Line 1,Ana\n"
+        "2025-03-11,Review,Draft,Line 2,Ben\n2025-03-12,Results,Bioburden,Line 2,Ana\n"
+    )
+    assert tl.timelines(rows) == ["Line 1", "Line 2"]
+    assert len(tl.filter_rows(rows)) == 3
+    assert [r["description"] for r in tl.filter_rows(rows, hidden=["Results"])] == ["Draft"]
+    assert len(tl.filter_rows(rows, timeline="Line 2")) == 2
+    assert [r["description"] for r in tl.filter_rows(rows, text="ANA")] == ["pH data", "Bioburden"]
+    assert tl.filter_rows(rows, ["Review"], "Line 2", "bio")[0]["description"] == "Bioburden"
+
+
+def test_elapsed_time_and_gaps():
+    assert tl.span_text("2025-03-10", "2025-03-13") == "3 d"
+    assert tl.span_text("2025-03-10 09:15", "2025-03-10 11:40") == "2 h 25 min"
+    assert tl.span_text("2025-03-10 09:00", "2025-03-11 13:00") == "1 d 4 h"
+    assert tl.span_text("2025-03-10 09:00", "2025-03-11") == "1 d"  # one side has no time: whole days
+    rows, _ = tl.rows_from_text("2025-03-10 09:15,A,x\n2025-03-10 11:40,A,y\n2025-03-14,A,z\n")
+    assert [r["gap"] for r in tl.with_gaps(rows)] == ["", "+2 h 25 min", "+4 d"]
+
+
+def test_in_view_treats_timed_events_as_points_and_dated_ones_as_whole_days():
+    rows, _ = tl.rows_from_text("2025-03-10 08:00,A,early\n2025-03-10 20:00,A,late\n2025-03-10,A,all day\n")
+    seen = tl.in_view(rows, datetime(2025, 3, 10, 12), datetime(2025, 3, 11, 12))
+    assert sorted(r["description"] for r in seen) == ["all day", "late"]
+
+
+def test_fit_view_shows_everything_within_zoom_limits():
+    rows, _ = tl.rows_from_text("2025-03-10,A,x\n2025-03-20,A,y\n")
+    start, end = tl.fit_view(rows)
+    assert start < datetime(2025, 3, 10) and end > datetime(2025, 3, 20)
+    assert len(tl.in_view(rows, start, end)) == 2
+    one, _ = tl.rows_from_text("2025-03-10 09:00,A,x\n")
+    start, end = tl.fit_view(one)
+    assert (end - start).total_seconds() / 86400 == pytest.approx(tl.MIN_DAYS)
+    long, _ = tl.rows_from_text("2025-01-01,A,x\n2027-01-01,A,y\n")
+    start, end = tl.fit_view(long)
+    assert (end - start).days == tl.MAX_DAYS and tl.in_view(long, start, end)[0]["description"] == "x"
+
+
+def test_tick_step_goes_from_hours_to_months():
+    assert tl.tick_step(1040) == ("hour", 2)  # one day on a wide screen
+    assert tl.tick_step(1100) == ("hour", 1)
+    assert tl.tick_step(150) == ("hour", 12)  # one week
+    assert tl.tick_step(34) == ("day", 1)  # one month
+    assert tl.tick_step(11) == ("week", 1)
+    assert tl.tick_step(5) == ("month", 1)
+
+
+def test_key_events_and_times_show_in_labels_and_tooltips():
+    row = tl.make_row("2026-11-03 09:15", "Deviation", "Alarm", owner="Ana", source="Alarm log", key="x")
+    assert tl.label_head(row) == "★ Deviation · 09:15"
+    assert tl.label_head(row, show_date=True) == "★ Deviation · 03 Nov 09:15"
+    assert tl.tip_lines(row) == ["Tue 03 Nov 2026 09:15", "★ Deviation", "Alarm", "Owner: Ana", "Source: Alarm log"]
+    band = tl.make_row("2026-11-03", "Phase", "Run", end="2026-11-27")
+    assert tl.tip_lines(band)[0] == "03 Nov 2026 – 27 Nov 2026 (24 d)"
+
+
+def test_merge_new_skips_duplicates():
+    rows, _ = tl.rows_from_text("2025-03-10,A,x\n")
+    new, _ = tl.rows_from_text("2025-03-10,A,x\n2025-03-11,A,y\n")
+    merged, fresh = tl.merge_new(rows, new)
+    assert len(merged) == 2 and [r["description"] for r in fresh] == ["y"]
+
+
+def test_apply_table_edits_deletes_and_rejects_bad_dates():
+    rows, _ = tl.rows_from_text(
+        "date,class,description,owner\n2025-03-10,A,x,Ana\n2025-03-11,A,y,Ben\n2025-03-12,A,z,\n"
+    )
+    a, b, c = rows
+    table = [
+        {"id": a["id"], "date": "soon", "end": "", "class": "A", "description": "x2"},
+        dict(b, end="2025-03-15 12:00"),
+    ]
+    out, message = tl.apply_table(rows, table, previous=[a, b, c])  # c was deleted in the table
+    assert [r["description"] for r in out] == ["x2", "y"]
+    assert out[0]["date"] == "2025-03-10" and "not a date" in message  # bad date: old one kept
+    assert out[0]["owner"] == "Ana"  # a column not shown in the table keeps its value
+    assert out[1]["end"] == "2025-03-15 12:00"
+
+
+def test_figure_has_today_line_key_marker_and_stable_colours():
+    rows, _ = tl.rows_from_text("date,class,description,key\n2025-03-10 09:00,Deviation,x,yes\n2025-03-11,Results,y,\n")
+    colours = tl.class_colours(rows)
+    fig = build_figure(
+        rows[1:], datetime(2025, 3, 1), datetime(2025, 4, 1), now=datetime(2025, 3, 12, 15), colours=colours
+    )
+    assert fig.data[0].line.color == colours["Results"]  # filtering a class away must not repaint the rest
+    assert any(a.text == "Today" for a in fig.layout.annotations)
+    fig = build_figure(rows, datetime(2025, 3, 10), datetime(2025, 3, 11))
+    assert "diamond" in fig.data[0].marker.symbol and fig.layout.xaxis.dtick == 2 * 3600000
+    assert not any(a.text == "Today" for a in fig.layout.annotations)
