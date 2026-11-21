@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+- Exe built from `requirements-lock.txt` (exact versions)
+- Notes: DataTable deprecation (bug #4), partner feedback in roadmap
+
 ## v1.1.1 - 2026-11-21 (build fix)
 - Windows exe build fixed: the web/Python parity test now talks to Node in UTF-8 (bug #3)
 - Exe build also runs when tests change
