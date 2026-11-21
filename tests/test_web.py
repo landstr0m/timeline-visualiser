@@ -60,7 +60,9 @@ process.stdout.write(JSON.stringify({ out, ticks, palette: PALETTE, min: MIN_DAY
 
 def run_web(cases):
     script = HTML.split("<script>", 1)[1].split(STATE_MARK, 1)[0]
-    res = subprocess.run(["node", "-e", script + HARNESS], input=json.dumps(cases), capture_output=True, text=True)
+    res = subprocess.run(
+        ["node", "-e", script + HARNESS], input=json.dumps(cases), capture_output=True, text=True, encoding="utf-8"
+    )
     assert res.returncode == 0, res.stderr
     return json.loads(res.stdout)
 
