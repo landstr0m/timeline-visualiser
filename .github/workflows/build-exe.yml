@@ -7,7 +7,7 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-    paths: ["app.py", "timeline.py", "figure.py", "requirements.txt", "sample_events.csv", ".github/workflows/build-exe.yml"]
+    paths: ["app.py", "timeline.py", "figure.py", "requirements.txt", "sample_events.csv", "tests/**", ".github/workflows/build-exe.yml"]
   workflow_dispatch:
 permissions:
   contents: write

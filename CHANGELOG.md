@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.1 - 2026-11-21 (build fix)
+- Windows exe build fixed: the web/Python parity test now talks to Node in UTF-8 (bug #3)
+- Exe build also runs when tests change
+
 ## v1.1.0 - 2026-11-17 (investigation features)
 - Time of day on events and bands; zoom to 1 day with hour ticks
 - Gap column (time since the previous event), band length in tooltips
