@@ -137,6 +137,10 @@ user's machine or in browser storage. The live page and repo are public.
 
 ## Decisions
 
+- **Exe built from a lock file (v1.1.2).** `requirements-lock.txt` pins every
+  package to an exact version, so the same code always gives the same exe.
+  The Tests workflow still installs from the ranges in `requirements.txt`, so a
+  new library version that breaks something shows up there first.
 - **Dash + Plotly.** Pure Python, runs locally, and Plotly gives drag-pan,
   wheel-zoom and PNG export without custom JavaScript (two short browser-side
   snippets: measuring width, and capture).

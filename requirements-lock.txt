@@ -1,0 +1,115 @@
+# Exact versions for the Windows exe build (see docs/DESIGN.md, Decisions).
+# Regenerate after changing requirements.txt:
+#   uv pip compile requirements.txt build-tools --universal --python-version 3.12 -o requirements-lock.txt
+#   (build-tools = a file listing pyinstaller and pytest)
+altgraph==0.17.5
+    # via
+    #   macholib
+    #   pyinstaller
+annotated-types==0.8.0
+    # via pydantic
+blinker==1.9.0
+    # via flask
+certifi==2026.11.20
+    # via requests
+charset-normalizer==3.5.2
+    # via requests
+click==8.5.1
+    # via flask
+colorama==0.4.6 ; sys_platform == 'win32'
+    # via pytest
+comm==0.2.3
+    # via dash
+dash==4.5.1
+    # via -r requirements.txt
+et-xmlfile==2.0.0
+    # via openpyxl
+flask==3.1.3
+    # via dash
+idna==3.20
+    # via requests
+importlib-metadata==10.2.0
+    # via dash
+iniconfig==2.3.1
+    # via pytest
+itsdangerous==2.2.0
+    # via flask
+janus==2.1.1
+    # via dash
+jinja2==3.1.6
+    # via flask
+lazy-importer==0.1.0 ; python_full_version < '3.15'
+    # via importlib-metadata
+macholib==1.16.4 ; sys_platform == 'darwin'
+    # via pyinstaller
+markupsafe==3.0.4
+    # via
+    #   flask
+    #   jinja2
+    #   werkzeug
+narwhals==2.29.0
+    # via plotly
+nest-asyncio==1.6.0
+    # via dash
+numpy==2.5.5
+    # via pandas
+openpyxl==3.1.5
+    # via -r requirements.txt
+packaging==26.3
+    # via
+    #   plotly
+    #   pyinstaller
+    #   pyinstaller-hooks-contrib
+    #   pytest
+pandas==3.1.1
+    # via -r requirements.txt
+pefile==2024.8.26 ; sys_platform == 'win32'
+    # via pyinstaller
+plotly==7.1.0
+    # via dash
+pluggy==1.7.0
+    # via pytest
+pydantic==2.14.4
+    # via dash
+pydantic-core==2.50.5
+    # via pydantic
+pygments==2.21.0
+    # via pytest
+pyinstaller==6.22.3
+    # via -r build tools (pyinstaller, pytest)
+pyinstaller-hooks-contrib==2026.10
+    # via pyinstaller
+pytest==9.2.0
+    # via -r build tools (pyinstaller, pytest)
+python-dateutil==4.0.0
+    # via pandas
+pywin32-ctypes==0.2.3 ; sys_platform == 'win32'
+    # via pyinstaller
+requests==2.34.2
+    # via dash
+retrying==1.4.2
+    # via dash
+setuptools==84.2.1
+    # via
+    #   dash
+    #   pyinstaller
+typing-extensions==4.16.0
+    # via
+    #   dash
+    #   pydantic
+    #   pydantic-core
+    #   typing-inspection
+typing-inspection==0.4.5
+    # via pydantic
+tzdata==2026.6
+    # via
+    #   pandas
+    #   python-dateutil
+urllib3==2.8.0
+    # via requests
+werkzeug==3.1.9
+    # via
+    #   dash
+    #   flask
+zipp==4.1.2
+    # via importlib-metadata

@@ -26,6 +26,19 @@ timelines in root-cause-analysis tools (see `docs/DESIGN.md`, *Comparison*).
 - Zoom 1 week to 6 months, table filtered to the view, data kept until cleared
 - Tests on every push, including a web/Python parity check
 
+## Feedback to sort (21 Nov 2026, partner; boss feedback due next week)
+Rank these together with the next round of feedback before building.
+- **Table scope toggle**: the table only lists events in the current view
+  (a design choice), which hid events. Add a toggle: *All events* / *Linked to view*.
+- **Dependencies**: users expected linked events to move together. This is not
+  built yet (item 3 below), so it read as broken. Needed: (a) clear
+  instructions in the app and README on setting `id` and `depends_on`;
+  (b) when an event's date changes, its dependants move by the same amount.
+
+## Must do before raising `dash<5`
+- Replace Dash `DataTable` (deprecated; bug #4). Candidate: `dash-ag-grid`;
+  check it keeps Tab focus, paste and undo.
+
 ## Next (pick in order)
 1. **Swimlanes**: draw each `timeline` in its own horizontal strip (the column and the picker already exist)
 2. **Measure**: click two events to show the elapsed time between them on the picture
@@ -39,7 +52,6 @@ timelines in root-cause-analysis tools (see `docs/DESIGN.md`, *Comparison*).
 - Wheel-to-scroll option
 - An event at exactly 00:00 (today midnight means "no time given")
 - Python version: redraw while dragging
-- Replace Dash `DataTable` before the Dash version that removes it (deprecation warning since Dash 3)
 - Share a timeline as a link. Security: the data would sit in the link itself, so only for non-confidential timelines; needs a design note first
 
 ## Decided against (for now)
