@@ -28,6 +28,7 @@ An event ("row") is a dict of strings:
 from __future__ import annotations
 
 import io
+import math
 import re
 import textwrap
 import uuid
@@ -432,6 +433,74 @@ def in_view(rows: list[dict], start: datetime, end: datetime) -> list[dict]:
     return in_span(rows, datetime_num(start), datetime_num(end))
 
 
+# -------------------------------------------------------------- breaks ----
+# "Compress gaps": a stretch with no activity that is at least GAP_SHARE of the
+# visible span is cut out of the axis, leaving PAD_SHARE of the span on each side.
+# Only event dates and band starts/ends count as activity, so a band running
+# through a gap is shortened with it. Positions on a compressed axis are
+# "display" day numbers: real day numbers minus the hidden time before them.
+GAP_SHARE, PAD_SHARE = 0.3, 0.05
+
+
+def find_breaks(rows: list[dict], span: float, px_per_day: float, expanded=()) -> list[dict]:
+    """The stretches to cut out, in date order: {key, lo, hi, gap}.
+
+    `lo`..`hi` is the hidden part (real day numbers); `gap` is the whole quiet
+    stretch in days, for the label; `key` names the gap so it can be expanded.
+    Breaks only fall between two moments of activity, so nothing is cut before
+    the first event or after the last. A band starting just before a gap keeps
+    room for its label.
+    """
+    moments: dict[float, float] = {}  # moment -> room needed to its right, in days
+    for r in rows:
+        moments.setdefault(when_num(r["date"]), 0)
+        if r.get("end"):
+            name = (KEY_MARK if r.get("key") else "") + (r["class"] or "Event")
+            room = ((len(name) + len(r["description"]) + 2) * CHAR_PX + 16) / px_per_day
+            start = when_num(r["date"])
+            moments[start] = max(moments[start], room)
+            moments.setdefault(when_num(r["end"]), 0)
+    times, pad, out = sorted(moments), span * PAD_SHARE, []
+    for a, b in zip(times, times[1:]):
+        key = f"{num_when(a)}|{num_when(b)}"
+        lo, hi = a + max(pad, moments[a]), b - pad
+        if b - a >= span * GAP_SHARE and hi > lo and key not in expanded:
+            out.append({"key": key, "lo": lo, "hi": hi, "gap": b - a})
+    return out
+
+
+def squash(breaks: list[dict], x: float) -> float:
+    """Real day number -> display day number (hidden time removed)."""
+    d = x
+    for b in breaks:
+        if x <= b["lo"]:
+            break
+        d -= min(x, b["hi"]) - b["lo"]
+    return d
+
+
+def unsquash(breaks: list[dict], d: float) -> float:
+    """Display day number -> real day number. A break's own point maps to its start."""
+    for b in breaks:
+        if d <= b["lo"]:
+            break
+        d += b["hi"] - b["lo"]
+    return d
+
+
+def break_text(days: float) -> str:
+    """Label for a compressed gap: "7 h", "15 days", "1 month", "2.5 years"."""
+    half_up = math.floor  # same rounding as Math.round in the web version
+    if days < 1:
+        return f"{half_up(days * 24 + 0.5)} h"
+    if days < 60:
+        n = half_up(days + 0.5)
+        return f"{n} day" + ("s" if n != 1 else "")
+    if days < 730:
+        return f"{half_up(days / 30.44 + 0.5)} months"
+    return f"{half_up(days / 365.25 * 10 + 0.5) / 10:g} years"
+
+
 # ----------------------------------------------------------------- text ----
 def span_text(a: str, b: str) -> str:
     """Elapsed time from a to b: "3 d", "1 d 4 h", "2 h 15 min".
@@ -504,19 +573,21 @@ def _label_lines(row: dict, wrap: int, max_lines: int, show_date: bool) -> list[
     return [label_head(row, show_date)] + body
 
 
-def layout_labels(rows: list[dict], px_per_day: float, show_date: bool = False) -> list[dict]:
+def layout_labels(rows: list[dict], px_per_day: float, show_date: bool = False, pos=None) -> list[dict]:
     """Give each single-date event a text label and a lane (1 = nearest the axis).
 
     Labels sit to the right of their date line. Each one takes the lowest lane
     whose previous label has ended, so labels never overlap. If that needs more
     than MAX_LANES lanes, the text is shortened and the layout retried.
+    `pos` turns a day number into a position on the axis (see `squash`).
     """
+    pos = pos or (lambda x: x)
     placed: list[dict] = []
     for wrap, max_lines in LEVELS:
         placed, lane_end = [], []
         for row in sort_rows(rows):
             lines = _label_lines(row, wrap, max_lines, show_date)
-            x = when_num(row["date"])
+            x = pos(when_num(row["date"]))
             width = (max(len(s) for s in lines) * CHAR_PX + 16) / px_per_day
             lane = next((i for i, e in enumerate(lane_end) if e <= x), len(lane_end))
             if lane == len(lane_end):
@@ -528,21 +599,22 @@ def layout_labels(rows: list[dict], px_per_day: float, show_date: bool = False) 
     return placed
 
 
-def layout_bands(rows: list[dict], px_per_day: float, view_start: float) -> list[dict]:
+def layout_bands(rows: list[dict], px_per_day: float, view_start: float, pos=None) -> list[dict]:
     """Give each band (event with an end) a lane and a label position.
 
     The label sits at the band's start, or at the left edge of the view when
     the band started earlier. A lane is reused once the previous band and its
-    label have both ended.
+    label have both ended. `pos` as in `layout_labels`.
     """
+    pos = pos or (lambda x: x)
     placed, lane_end = [], []
     for row in sort_rows(rows):
         x0, x1 = when_num(row["date"]), when_num(row["end"])
         label_x = min(max(x0, view_start), x1)
         name = (KEY_MARK if row.get("key") else "") + (row["class"] or "Event")
         chars = len(name) + len(row["description"]) + 2
-        right = max(x1, label_x + (chars * CHAR_PX + 16) / px_per_day)
-        lane = next((i for i, e in enumerate(lane_end) if e <= x0), len(lane_end))
+        right = max(pos(x1), pos(label_x) + (chars * CHAR_PX + 16) / px_per_day)
+        lane = next((i for i, e in enumerate(lane_end) if e <= pos(x0)), len(lane_end))
         if lane == len(lane_end):
             lane_end.append(0)
         lane_end[lane] = right

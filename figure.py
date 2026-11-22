@@ -74,7 +74,7 @@ def _label_text(fig: go.Figure, labels: list[dict], lane_px: float) -> None:
         )
 
 
-def _weekends(fig: go.Figure, first: datetime, last: datetime, hourly: bool) -> None:
+def _weekends(fig: go.Figure, first: datetime, last: datetime, hourly: bool, breaks=()) -> None:
     """Grey weekend stripes.
 
     Date-only events sit on the midnight tick of their day, so at day zoom the
@@ -84,7 +84,9 @@ def _weekends(fig: go.Figure, first: datetime, last: datetime, hourly: bool) -> 
     shift = timedelta(0) if hourly else timedelta(hours=12)
     day = first.date()
     while day <= last.date():
-        if day.weekday() == 5:
+        n = tl.datetime_num(datetime.combine(day, datetime.min.time()))
+        hidden = any(b["lo"] < n + 2 and n - 1 < b["hi"] for b in breaks)  # touches a compressed gap
+        if day.weekday() == 5 and not hidden:
             saturday = datetime.combine(day, datetime.min.time())
             fig.add_vrect(
                 x0=saturday - shift,
@@ -146,6 +148,29 @@ def _today(fig: go.Figure, now: datetime, hourly: bool, top: float) -> None:
     )
 
 
+def _breaks(fig: go.Figure, breaks: list[dict], top: float) -> None:
+    """Each compressed gap: a dotted line, "//" on the axis and the hidden time as a label.
+
+    Plotly's rangebreaks cut the time out; these marks make the cut impossible to miss.
+    """
+    for b in breaks:
+        x = tl.num_datetime(b["lo"])
+        fig.add_shape(type="line", x0=x, x1=x, y0=0, y1=top, line=dict(color=tl.MUTED, width=1, dash="dot"))
+        fig.add_annotation(
+            x=x, y=0, text="<b>//</b>", showarrow=False, font=dict(size=14, color=tl.INK), bgcolor="#fff", borderpad=0
+        )
+        fig.add_annotation(
+            x=x,
+            y=0,
+            yanchor="bottom",
+            yshift=9,
+            text=f"({tl.break_text(b['gap'])})",
+            showarrow=False,
+            font=dict(size=11, color=tl.INK),
+            bgcolor="#fff",
+        )
+
+
 def _ticks(px_per_day: float) -> dict:
     """Plotly axis settings for the tick spacing chosen by timeline.tick_step."""
     unit, step = tl.tick_step(px_per_day)
@@ -166,14 +191,18 @@ def build_figure(
     title: str = "",
     now: datetime | None = None,
     colours: dict | None = None,
+    breaks: list[dict] | None = None,
 ) -> go.Figure:
     """The timeline for the visible range `start`..`end`.
 
     `rows` are the events to draw (already filtered). `colours` maps class to
     colour; pass the map for the whole data set so filtering never repaints a
-    class. `now` places the Today line (omit to leave it out).
+    class. `now` places the Today line (omit to leave it out). `breaks`
+    (from timeline.find_breaks) are cut out of the axis.
     """
-    span = (end - start).total_seconds() / 86400
+    breaks = breaks or []
+    squash = lambda x: tl.squash(breaks, x)  # noqa: E731
+    span = squash(tl.datetime_num(end)) - squash(tl.datetime_num(start))
     margin = dict(l=30, r=30, t=70 if title else 40, b=50)
     px_per_day = max(width_px - margin["l"] - margin["r"], 200) / span
     daily = px_per_day >= tl.DAILY_PX
@@ -183,8 +212,8 @@ def build_figure(
     # Lay out one extra screen either side so dragging reveals finished labels.
     pad = timedelta(days=span)
     shown = tl.in_view(rows, start - pad, end + pad)
-    labels = tl.layout_labels([r for r in shown if not r.get("end")], px_per_day, show_date=not daily)
-    bands = tl.layout_bands([r for r in shown if r.get("end")], px_per_day, tl.datetime_num(start))
+    labels = tl.layout_labels([r for r in shown if not r.get("end")], px_per_day, not daily, squash)
+    bands = tl.layout_bands([r for r in shown if r.get("end")], px_per_day, tl.datetime_num(start), squash)
 
     n_lines = max((len(p["lines"]) for p in labels), default=1)
     lane_px = n_lines * tl.LINE_PX + tl.LANE_GAP
@@ -195,10 +224,11 @@ def build_figure(
     _lines_and_markers(fig, labels, colours, lane_px)
     _label_text(fig, labels, lane_px)
     if span <= 100:
-        _weekends(fig, start - pad, end + pad, hourly)
+        _weekends(fig, start - pad, end + pad, hourly, breaks)
     _bands(fig, bands, colours, points_top)
     if now is not None:
         _today(fig, now, hourly, top)
+    _breaks(fig, breaks, top)
 
     fig.update_layout(
         title=dict(text=title, x=0.01, font=dict(size=20, color=tl.INK)) if title else None,
@@ -232,6 +262,7 @@ def build_figure(
             automargin=False,
             showgrid=not daily or hourly,
             gridcolor=tl.GRID,
+            rangebreaks=[dict(bounds=[tl.num_datetime(b["lo"]), tl.num_datetime(b["hi"])]) for b in breaks],
             **_ticks(px_per_day),
         ),
         yaxis=dict(range=[0, top + TODAY_PX], visible=False, fixedrange=True),

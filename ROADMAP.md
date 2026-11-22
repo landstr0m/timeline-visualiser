@@ -7,6 +7,9 @@ page busier needs a strong reason.
 
 ## Done
 
+### Unreleased (22 Nov 2026)
+- Compress gaps: optional toggle, zig-zag break with the quiet time, × opens one gap
+
 ### v1.1.0 (17 Nov 2026) - investigation features
 Chosen after comparing with vis-timeline, Office Timeline and the event
 timelines in root-cause-analysis tools (see `docs/DESIGN.md`, *Comparison*).
@@ -45,20 +48,13 @@ rows were ready in the table at once; the style is already good.
   might cause problems where items move unexpectedly."* So: dates only change
   when the user edits them; an event that starts before something it depends
   on has finished is marked (table row and timeline) with the reason in the
-  tooltip. Open: what "due date" means - the end of the predecessor's band,
-  or its single date.
-- **Compressed time axis** (optional, off by default). Long stretches with no
-  activity are squeezed so the events on both sides fit on one timeline.
-  - Each squeezed stretch is drawn as a visible break in the axis with a label
-    giving the time it holds, e.g. `1 week | (1 month) | 1 week`.
-  - Toggle *Compress gaps*: on / off.
-  - Each break label has an **×** that expands that break only; the others stay compressed.
-  - Turning the toggle off and on again resets: every break is compressed again.
-  - To decide before building: the minimum gap that counts as "long" (fixed,
-    e.g. 7 days, or relative to the zoom); whether a band running through the
-    gap counts as activity (a long phase band would stop any compression);
-    how drag, zoom, Today and the 6-month limit behave across a break; and
-    that the PNG shows the breaks clearly, so no one reads distances as real.
+  tooltip. "Due" = the predecessor's end date (its single date if it has no
+  end). Keep this question open: revisit if it causes problems in use.
+- **Compressed time axis**: built 22 Nov (see Done). It was the blocker that
+  made the tester stop using the tool for a hand-drawn timeline. Decisions:
+  gap threshold 30% of the view (follows zoom); band starts/ends are activity,
+  band middles are compressed; never before the first or after the last event;
+  breaks always shown in the PNG. Rules in `docs/DESIGN.md`.
 
 ## Must do before raising `dash<5`
 - Replace Dash `DataTable` (deprecated; bug #4). Candidate: `dash-ag-grid`;

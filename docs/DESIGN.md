@@ -29,6 +29,7 @@
 | 23 | Undo | `undo` store in `update_rows`; `change()` in the web version |
 | 24 | Fit all events in view | `fit_span`, `fit_view` |
 | 25 | Copy the picture to the clipboard | browser-side snippet in `app.py`; `toPng` in the web version |
+| 26 | Compress long quiet stretches (toggle, per-gap expand) | `find_breaks`, `squash`, `unsquash`, `break_text`; Plotly `rangebreaks` + `_breaks` in `figure.py` |
 
 Function names above are the Python ones; `web/index.html` has the same
 functions in camelCase.
@@ -100,6 +101,31 @@ Bands sit in their own strip above the single-date labels, so date lines never
 cross them. Each takes the lowest lane that is free from its start date; a
 lane stays busy until both the band and its label have ended. The label is
 placed at `max(band start, view start)`, never past the band's end.
+
+## Compressed gaps (requirement 26, partner feedback 22 Nov 2026)
+
+- **Activity** is every event date and every band start and end. The middle of
+  a band is not activity, so a long band is shortened along with the gap.
+- **A gap is cut** when it is at least `GAP_SHARE` (30%) of the visible span.
+  `PAD_SHARE` (5% of the span) stays visible on each side; the left side also
+  keeps room for the label of a band starting there, so it stays readable.
+  Gaps only fall between two moments of activity, so nothing is cut before the
+  first event or after the last.
+- **Gaps are found over all shown (filtered) events, not only the visible
+  ones.** The result is the same as "compress, see what comes into view,
+  compress again", but breaks do not appear and vanish while dragging. The
+  threshold follows the zoom: at 1 month a 9-day gap is cut, at 6 months it is not.
+- **Positions**: `squash` turns a real day number into an axis position by
+  removing hidden time; `unsquash` goes back. The view keeps its start as a
+  real date and its span in axis days, so zoom levels mean the same screen width.
+  Moves (drag, ◀ ▶, zoom, Today) are worked out in axis positions.
+- **Drawing**: web draws the cut itself (dotted line, zig-zag, label with ×).
+  Python uses Plotly `rangebreaks` to remove the time and `_breaks` for the
+  marks. Both are part of the picture, so a PNG can never hide a compression.
+- **Labels** show the whole quiet stretch between the two events (what a reader
+  wants to know), not only the hidden part.
+- Each gap is named by its two edge moments (`key`). Opened gaps are kept in
+  memory only; the toggle clears them. The toggle itself is remembered.
 
 ## Persistence (requirement 16)
 
