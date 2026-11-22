@@ -9,6 +9,8 @@ page busier needs a strong reason.
 
 ### Unreleased (22 Nov 2026)
 - Compress gaps: optional toggle, zig-zag break with the quiet time, × opens one gap
+- Table scope: linked to view / all events
+- Dependencies: flag (⚠, Check column, tooltip), never move; instructions in app and README
 
 ### v1.1.0 (17 Nov 2026) - investigation features
 Chosen after comparing with vis-timeline, Office Timeline and the event
@@ -29,32 +31,14 @@ timelines in root-cause-analysis tools (see `docs/DESIGN.md`, *Comparison*).
 - Zoom 1 week to 6 months, table filtered to the view, data kept until cleared
 - Tests on every push, including a web/Python parity check
 
-## Feedback to sort (21 Nov 2026, partner; boss feedback due next week)
-Rank these together with the next round of feedback before building.
-- **Table scope toggle**: the table only lists events in the current view
-  (a design choice), which hid events. Add a toggle: *All events* / *Linked to view*.
-- **Dependencies**: users expected linked events to move together. This is not
-  built yet (item 3 below), so it read as broken. Needed: (a) clear
-  instructions in the app and README on setting `id` and `depends_on`;
-  (b) ~~when an event's date changes, its dependants move by the same amount~~
-  superseded 22 Nov, see below.
-
-## Feedback to sort (22 Nov 2026, partner)
-Liked: the app generally works well; copy-paste of activities was easy and the
-rows were ready in the table at once; the style is already good.
-- **Dependencies: flag, never move** (replaces 21 Nov item (b) and changes
-  Next item 3). Quote: *"I would prefer that it flags when a dependency happens
-  after a due date, and not that it automatically pushes the date, since this
-  might cause problems where items move unexpectedly."* So: dates only change
-  when the user edits them; an event that starts before something it depends
-  on has finished is marked (table row and timeline) with the reason in the
-  tooltip. "Due" = the predecessor's end date (its single date if it has no
-  end). Keep this question open: revisit if it causes problems in use.
-- **Compressed time axis**: built 22 Nov (see Done). It was the blocker that
-  made the tester stop using the tool for a hand-drawn timeline. Decisions:
-  gap threshold 30% of the view (follows zoom); band starts/ends are activity,
-  band middles are compressed; never before the first or after the last event;
-  breaks always shown in the PNG. Rules in `docs/DESIGN.md`.
+## Feedback log
+- 21 Nov 2026 (partner): table hid events outside the view; linked events were expected to move. Both addressed (see Done).
+- 22 Nov 2026 (partner): works well; copy-paste easy; style good. Long quiet stretches blocked use (tester switched to a
+  hand-drawn timeline) - built *Compress gaps*. Dependencies should *flag*, not move: *"I would prefer that it flags
+  when a dependency happens after a due date, and not that it automatically pushes the date, since this might cause
+  problems where items move unexpectedly."* Built as flag-only.
+- Open question: "due" = the predecessor's end date (its date if it has no end). Revisit if it causes problems in use.
+- Boss feedback: not waited for; add here if it comes.
 
 ## Must do before raising `dash<5`
 - Replace Dash `DataTable` (deprecated; bug #4). Candidate: `dash-ag-grid`;
@@ -63,10 +47,9 @@ rows were ready in the table at once; the style is already good.
 ## Next (pick in order)
 1. **Swimlanes**: draw each `timeline` in its own horizontal strip (the column and the picker already exist)
 2. **Measure**: click two events to show the elapsed time between them on the picture
-3. **Dependencies**: flag an event that starts before an event it depends on is due; never move dates automatically (`id` and `depends_on` are already stored; changed 22 Nov after feedback)
-4. **Overlap/clash view** between timelines
-5. **Report export**: picture plus table as one printable page
-6. **Excel loading in the web version** (needs an unzip step; check it can stay library-free)
+3. **Overlap/clash view** between timelines
+4. **Report export**: picture plus table as one printable page
+5. **Excel loading in the web version** (needs an unzip step; check it can stay library-free)
 
 ## Later / ideas
 - Keyboard shortcuts (arrows to scroll, +/- to zoom)

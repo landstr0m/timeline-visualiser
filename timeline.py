@@ -51,6 +51,7 @@ INK, MUTED, GRID = "#1a1a19", "#6b6a62", "#e6e5df"
 MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]  # date.weekday() order
 KEY_MARK = "★ "  # shown before the class of a key event
+WARN_MARK = "⚠ "  # shown before the class of an event with a dependency problem
 TRUTHY = {"yes", "y", "true", "1", "x", "key", "★"}
 
 # Header names accepted in files, mapped to the column they mean.
@@ -455,13 +456,13 @@ def find_breaks(rows: list[dict], span: float, px_per_day: float, expanded=()) -
     for r in rows:
         moments.setdefault(when_num(r["date"]), 0)
         if r.get("end"):
-            name = (KEY_MARK if r.get("key") else "") + (r["class"] or "Event")
+            name = band_name(r)
             room = ((len(name) + len(r["description"]) + 2) * CHAR_PX + 16) / px_per_day
             start = when_num(r["date"])
             moments[start] = max(moments[start], room)
             moments.setdefault(when_num(r["end"]), 0)
     times, pad, out = sorted(moments), span * PAD_SHARE, []
-    for a, b in zip(times, times[1:]):
+    for a, b in zip(times, times[1:], strict=False):
         key = f"{num_when(a)}|{num_when(b)}"
         lo, hi = a + max(pad, moments[a]), b - pad
         if b - a >= span * GAP_SHARE and hi > lo and key not in expanded:
@@ -501,6 +502,37 @@ def break_text(days: float) -> str:
     return f"{half_up(days / 365.25 * 10 + 0.5) / 10:g} years"
 
 
+# --------------------------------------------------------- dependencies ----
+def dependency_issues(rows: list[dict]) -> dict[str, list[str]]:
+    """Problems with `depends_on`, by row id. Dates are never changed, only flagged.
+
+    `depends_on` lists the `id`s (CSV column) of events this one follows,
+    separated by commas, semicolons or spaces. An event is flagged when it
+    starts before one of them is due (its end, or its date if it has no end),
+    or when it names an id that is not in the data.
+    """
+    by_ref = {r["ref"]: r for r in rows if r.get("ref")}
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        for ref in re.split(r"[\s,;]+", r.get("depends_on") or ""):
+            before = by_ref.get(ref)
+            if not ref:
+                continue
+            if before is None:
+                message = f"Depends on {ref}, which is not in the data"
+            elif when_num(r["date"]) < when_num(before.get("end") or before["date"]):
+                message = f"Starts before {ref} is due ({fmt_when(before.get('end') or before['date'])})"
+            else:
+                continue
+            out.setdefault(r["id"], []).append(message)
+    return out
+
+
+def flag_rows(rows: list[dict], issues: dict[str, list[str]]) -> list[dict]:
+    """Copies of the rows, with `warn` (list of problems) on those that have any."""
+    return [{**r, "warn": issues[r["id"]]} if r["id"] in issues else r for r in rows]
+
+
 # ----------------------------------------------------------------- text ----
 def span_text(a: str, b: str) -> str:
     """Elapsed time from a to b: "3 d", "1 d 4 h", "2 h 15 min".
@@ -535,7 +567,12 @@ def tip_lines(row: dict) -> list[str]:
     for label, field in (("Owner", "owner"), ("Source", "source"), ("Timeline", "timeline")):
         if row.get(field):
             lines.append(f"{label}: {row[field]}")
-    return lines
+    return lines + [WARN_MARK + w for w in row.get("warn") or []]
+
+
+def band_name(row: dict) -> str:
+    """Bold part of a band label: marks, then the class."""
+    return (WARN_MARK if row.get("warn") else "") + (KEY_MARK if row.get("key") else "") + (row["class"] or "Event")
 
 
 # --------------------------------------------------------------- layout ----
@@ -559,7 +596,7 @@ def tick_step(px_per_day: float) -> tuple[str, int]:
 
 def label_head(row: dict, show_date: bool = False) -> str:
     """Bold first line of a label: "★ Class · 06 Nov 14:30" (star, date and time only when needed)."""
-    head = (KEY_MARK if row.get("key") else "") + (row["class"] or "Event")
+    head = band_name(row)
     extra = [fmt_when(row["date"][:10])[:6]] if show_date else []
     if has_time(row["date"]):
         extra.append(row["date"][11:])
@@ -611,7 +648,7 @@ def layout_bands(rows: list[dict], px_per_day: float, view_start: float, pos=Non
     for row in sort_rows(rows):
         x0, x1 = when_num(row["date"]), when_num(row["end"])
         label_x = min(max(x0, view_start), x1)
-        name = (KEY_MARK if row.get("key") else "") + (row["class"] or "Event")
+        name = band_name(row)
         chars = len(name) + len(row["description"]) + 2
         right = max(pos(x1), pos(label_x) + (chars * CHAR_PX + 16) / px_per_day)
         lane = next((i for i, e in enumerate(lane_end) if e <= pos(x0)), len(lane_end))

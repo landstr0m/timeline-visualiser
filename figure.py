@@ -162,8 +162,8 @@ def _breaks(fig: go.Figure, breaks: list[dict], top: float) -> None:
         fig.add_annotation(
             x=x,
             y=0,
-            yanchor="bottom",
-            yshift=9,
+            yanchor="top",
+            yshift=-44,  # under the two lines of tick text
             text=f"({tl.break_text(b['gap'])})",
             showarrow=False,
             font=dict(size=11, color=tl.INK),
@@ -203,7 +203,7 @@ def build_figure(
     breaks = breaks or []
     squash = lambda x: tl.squash(breaks, x)  # noqa: E731
     span = squash(tl.datetime_num(end)) - squash(tl.datetime_num(start))
-    margin = dict(l=30, r=30, t=70 if title else 40, b=50)
+    margin = dict(l=30, r=30, t=70 if title else 40, b=72 if breaks else 50)  # room for gap labels under the dates
     px_per_day = max(width_px - margin["l"] - margin["r"], 200) / span
     daily = px_per_day >= tl.DAILY_PX
     hourly = tl.tick_step(px_per_day)[0] == "hour"

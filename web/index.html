@@ -42,6 +42,7 @@
   td.act { white-space: nowrap; text-align: center; }
   td.act button { border: 0; padding: 2px 5px; background: transparent; }
   tr.key td { background: #fff8e1; }
+  td.warn { color: #b3261e; font-size: 13px; padding: 3px 6px; min-width: 160px; }
   textarea { width: 100%; height: 110px; box-sizing: border-box; margin: 6px 0; }
 </style>
 </head>
@@ -81,8 +82,14 @@
     <button id="save">Download CSV</button>
     <button id="undo" title="Take back the last change to the events">Undo</button>
     <button id="clear">Clear all</button>
+    <select id="scope" title="Which events the table lists">
+      <option value="view">Table: linked to view</option><option value="all">Table: all events</option>
+    </select>
     <span id="status" class="muted" role="status"></span>
   </div>
+  <p id="depHint" class="muted" style="margin:4px 0;font-size:14px" hidden>Dependencies: give an event an Id, then put that Id under
+    Depends on for each event that follows it (several: separate with commas). An event that starts before the one it depends on
+    is due (its end date, or its date if it has none) is marked ⚠ with the reason. Dates never move by themselves.</p>
   <div class="scroll"><table>
     <thead id="head"></thead>
     <tbody id="rows"></tbody>
@@ -107,7 +114,7 @@ const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const LEVELS = [[34, 2], [24, 1], [0, 0]];   // label detail: [wrap width, description lines]
 const LINE_PX = 16, LANE_GAP = 10, MAX_LANES = 5, BAND_PX = 28;
 const DAILY_PX = 22, HOUR_STEPS = [1, 2, 3, 6, 12], HOUR_TICK_PX = 44;
-const KEY_MARK = "★ ", TRUTHY = ["yes", "y", "true", "1", "x", "key", "★"];
+const WARN_MARK = "⚠ ", KEY_MARK = "★ ", TRUTHY = ["yes", "y", "true", "1", "x", "key", "★"];
 const COLUMNS = ["date", "end", "class", "description"];                   // always written to CSV
 const EXTRAS = ["id", "timeline", "owner", "source", "depends_on", "key"];  // written only when used
 const field = c => c === "id" ? "ref" : c;                                 // CSV column name -> row field
@@ -300,7 +307,7 @@ function findBreaks(rs, span, ppd, expanded = []) {   // -> [{ key, lo, hi, gap 
   for (const r of rs) {
     const s = num(r.date); if (!room.has(s)) room.set(s, 0);
     if (r.end) {
-      const name = (r.key ? KEY_MARK : "") + (r.class || "Event");
+      const name = bandName(r);
       room.set(s, Math.max(room.get(s), ((name.length + r.description.length + 2) * CHAR_PX + 16) / ppd));
       if (!room.has(num(r.end))) room.set(num(r.end), 0);
     }
@@ -328,6 +335,25 @@ function breakText(days) {   // "7 h", "15 days", "3 months", "2.2 years"
   return `${Math.round(days / 365.25 * 10) / 10} years`;
 }
 
+// --------------------------------------------------------- dependencies ----
+// Same rules as dependency_issues in timeline.py. Dates are never changed, only flagged: an event
+// is flagged when it starts before an event it depends on is due (its end, else its date), or when
+// it names an id that is not in the data. depends_on: ids separated by commas, semicolons or spaces.
+function dependencyIssues(rs) {   // -> { row id: [problem, ...] }
+  const byRef = {}, out = {};
+  for (const r of rs) if (r.ref) byRef[r.ref] = r;
+  for (const r of rs) for (const ref of (r.depends_on || "").split(/[\s,;]+/)) {
+    if (!ref) continue;
+    const before = byRef[ref], due = before && (before.end || before.date);
+    const msg = !before ? `Depends on ${ref}, which is not in the data`
+      : num(r.date) < num(due) ? `Starts before ${ref} is due (${fmtWhen(due)})` : null;
+    if (msg) (out[r.id] = out[r.id] || []).push(msg);
+  }
+  return out;
+}
+const flagRows = (rs, issues) => rs.map(r => issues[r.id] ? { ...r, warn: issues[r.id] } : r);
+const bandName = r => (r.warn ? WARN_MARK : "") + (r.key ? KEY_MARK : "") + (r.class || "Event");
+
 // ----------------------------------------------------------------- text ----
 // Elapsed time from a to b: "3 d", "1 d 4 h", "2 h 15 min". Without a time on
 // both sides, whole calendar days are counted.
@@ -347,13 +373,13 @@ function tipLines(r) {
   const when = r.end ? `${fmtWhen(r.date)} – ${fmtWhen(r.end)} (${spanText(r.date, r.end)})` : fmtWhen(r.date, true);
   const lines = [when, (r.key ? KEY_MARK : "") + (r.class || "Event"), r.description];
   for (const [label, f] of [["Owner", "owner"], ["Source", "source"], ["Timeline", "timeline"]]) if (r[f]) lines.push(`${label}: ${r[f]}`);
-  return lines;
+  return lines.concat((r.warn || []).map(w => WARN_MARK + w));
 }
 // Bold first line of a label: "★ Class · 06 Nov 14:30" (star, date and time only when needed).
 function labelHead(r, showDate) {
   const extra = showDate ? [fmtWhen(r.date.slice(0, 10)).slice(0, 6)] : [];
   if (hasTime(r.date)) extra.push(r.date.slice(11));
-  return (r.key ? KEY_MARK : "") + (r.class || "Event") + (extra.length ? " · " + extra.join(" ") : "");
+  return bandName(r) + (extra.length ? " · " + extra.join(" ") : "");
 }
 
 // ---------------------------------------------------------------- ticks ----
@@ -379,11 +405,12 @@ let filt = { hidden: [], timeline: "", text: "", ...store.get("filter", {}) };  
 let undoStack = [];                                      // earlier versions of `rows` for Undo; not stored
 let expanded = [];                                       // keys of compressed gaps opened with their ×; reset by the toggle
 $("compress").checked = store.get("compress", false);
+$("scope").value = store.get("scope", "view");
 $("title").value = store.get("title", "");
 $("search").value = filt.text;
 $("showDt").checked = store.get("details", false);
 const save = () => { store.set("rows", rows); store.set("view", view); store.set("title", $("title").value);
-  store.set("filter", filt); store.set("details", $("showDt").checked); store.set("compress", $("compress").checked); };
+  store.set("filter", filt); store.set("details", $("showDt").checked); store.set("compress", $("compress").checked); store.set("scope", $("scope").value); };
 const say = msg => $("status").textContent = msg;
 // Every change to the events goes through here, so Undo always has the previous version.
 function change(next, msg) {
@@ -430,7 +457,7 @@ function layoutBands(rs, ppd, viewStart, pos = x => x) {
   const placed = [], laneEnd = [];
   for (const r of sortRows(rs)) {
     const x0 = num(r.date), x1 = num(r.end), labelX = Math.min(Math.max(x0, viewStart), x1);
-    const name = (r.key ? KEY_MARK : "") + (r.class || "Event");
+    const name = bandName(r);
     const px = textW(name, true) + textW("  " + r.description, false) + 16;
     let lane = laneEnd.findIndex(e => e <= pos(x0)); if (lane < 0) lane = laneEnd.length;
     laneEnd[lane] = Math.max(pos(x1), pos(labelX) + px / ppd);
@@ -441,7 +468,7 @@ function layoutBands(rs, ppd, viewStart, pos = x => x) {
 
 // ----------------------------------------------------------------- draw ----
 // Vertical layout, top to bottom: title, legend, "Today" caption, bands, labels, axis, tick text.
-const shownRows = () => filterRows(rows, filt.hidden, timelines(rows).includes(filt.timeline) ? filt.timeline : "", filt.text);
+const shownRows = () => flagRows(filterRows(rows, filt.hidden, timelines(rows).includes(filt.timeline) ? filt.timeline : "", filt.text), dependencyIssues(rows));
 
 function draw() {
   const W = Math.max($("tl").clientWidth, 300), title = $("title").value.trim();
@@ -469,7 +496,8 @@ function draw() {
   const nLines = Math.max(1, ...labels.map(p => p.lines.length)), lanePx = nLines * LINE_PX + LANE_GAP;
   const pointsH = 24 + Math.max(0, ...labels.map(p => p.lane)) * lanePx;
   const bandsH = bands.length ? 10 + Math.max(...bands.map(b => b.lane)) * BAND_PX : 0;
-  const headH = (title ? 40 : 10) + legH, top = headH + 14, yAxis = top + bandsH + pointsH, H = yAxis + 46;
+  const cutRow = br.some(b => b.lo > lo && b.lo < hi) ? 22 : 0;   // gap labels sit under the tick text
+  const headH = (title ? 40 : 10) + legH, top = headH + 14, yAxis = top + bandsH + pointsH, H = yAxis + 46 + cutRow;
   const o = [`<rect width="${W}" height="${H}" fill="#fff"/>`];
   const text = (x, y, s, extra = "") => `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-family='${FONT}' font-size="12" fill="${INK}" ${extra}>${s}</text>`;
   const grey = `fill="${MUTED}" style="fill:${MUTED}"`;
@@ -535,7 +563,7 @@ function draw() {
     p.lines.forEach((s, i) => o.push(text(x + 7, y + 12 + i * LINE_PX, esc(s) + tip, i === 0 ? 'font-weight="600"' : "")));
   }
   o.push(`<line x1="${L}" x2="${W - R}" y1="${yAxis}" y2="${yAxis}" stroke="${MUTED}"/>`);
-  // compressed gaps: dotted line, a zig-zag cut in the axis and a label with the quiet time; click it to open the gap.
+  // compressed gaps: dotted line, a zig-zag cut in the axis and, under the dates, a label with the quiet time; click it to open the gap.
   // Drawn into the picture itself, so a PNG never hides a compression.
   const cuts = br.filter(b => b.lo > lo && b.lo < hi);
   for (const b of cuts) {
@@ -544,8 +572,8 @@ function draw() {
       `<rect x="${x - 8}" y="${yAxis - 3}" width="16" height="6" fill="#fff"/>`,
       `<path d="M${x - 8} ${yAxis}L${x - 5} ${yAxis - 5}L${x - 1} ${yAxis + 5}L${x + 3} ${yAxis - 5}L${x + 7} ${yAxis + 5}L${x + 8} ${yAxis}" fill="none" stroke="${INK}" stroke-width="1.5"/>`,
       `<g data-break="${esc(b.key)}" style="cursor:pointer"><title>${esc(breakText(b.gap))} with no events compressed - click to expand</title>`
-      + `<rect x="${x - w / 2}" y="${yAxis - 22}" width="${w}" height="16" rx="3" fill="#fff" stroke="${MUTED}"/>`
-      + text(x, yAxis - 10, esc(label), 'text-anchor="middle" font-weight="600" xml:space="preserve"') + "</g>");
+      + `<rect x="${x - w / 2}" y="${yAxis + 42}" width="${w}" height="16" rx="3" fill="#fff" stroke="${MUTED}"/>`
+      + text(x, yAxis + 54, esc(label), 'text-anchor="middle" font-weight="600" xml:space="preserve"') + "</g>");
   }
   for (const p of pts.filter(p => !p.key).concat(pts.filter(p => p.key))) {   // marker on the axis: a dot, or a larger diamond for a key event (drawn last, so on top)
     const x = X(p.x), c = `fill="${col(p.class)}" stroke="#fff" stroke-width="2"`;
@@ -556,23 +584,26 @@ function draw() {
   svg.setAttribute("width", W); svg.setAttribute("height", H); svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   svg.innerHTML = o.join("");
   svg._ppd = ppd; svg._left = L; svg._breaks = br;
-  const visible = withGaps(inSpan(kept, lo, hi));
-  $("caption").textContent = `Showing ${fmtWhen(hourly ? numWhen(lo) : iso(lo))} – ${fmtWhen(hourly ? numWhen(hi) : iso(hi))} · ${visible.length} of ${rows.length} events`
+  const inView = inSpan(kept, lo, hi), flagged = kept.filter(r => r.warn).length;
+  $("caption").textContent = `Showing ${fmtWhen(hourly ? numWhen(lo) : iso(lo))} – ${fmtWhen(hourly ? numWhen(hi) : iso(hi))} · ${inView.length} of ${rows.length} events`
     + (kept.length < rows.length ? ` · filter on (${rows.length - kept.length} hidden)` : "")
-    + (cuts.length ? ` · ${cuts.length} gap(s) compressed` : "");
-  return visible;
+    + (cuts.length ? ` · ${cuts.length} gap(s) compressed` : "")
+    + (flagged ? ` · ⚠ ${flagged} dependency problem(s)` : "");
+  return withGaps($("scope").value === "all" ? kept : inView);   // the table: everything, or only what is in view
 }
 
-// The table lists the events in view. Time boxes appear once any event has a time, or with Details.
+// The table lists the events in view (or all, with the scope picker). A Check column appears when something is flagged. Time boxes appear once any event has a time, or with Details.
 const DETAIL_COLS = [["owner", "Owner"], ["source", "Source"], ["timeline", "Timeline"], ["ref", "Id"], ["depends_on", "Depends on"]];
 function drawTable(visible) {
   const details = $("showDt").checked, times = details || rows.some(r => hasTime(r.date) || hasTime(r.end));
   const inp = (k, type, value, cls = "") => `<input type="${type}" class="${cls}" data-k="${k}" value="${esc(value || "")}" aria-label="${k}">`;
+  const check = visible.some(r => r.warn);
   const when = (r, k) => `<td class="when">${inp(k, "date", r[k].slice(0, 10))}${times ? inp(k + "Time", "time", r[k].slice(11), r[k].slice(11) ? "" : "empty") : ""}</td>`;
-  $("head").innerHTML = `<tr><th></th><th>Start</th><th>End (optional)</th><th title="Time since the previous event started">Gap</th><th style="width:170px">Class</th><th>Description</th>`
+  $("head").innerHTML = `<tr><th></th>${check ? "<th>Check</th>" : ""}<th>Start</th><th>End (optional)</th><th title="Time since the previous event started">Gap</th><th style="width:170px">Class</th><th>Description</th>`
     + (details ? DETAIL_COLS.map(c => `<th>${c[1]}</th>`).join("") : "") + "</tr>";
   $("rows").innerHTML = visible.map(r => `<tr data-id="${esc(r.id)}" class="${r.key ? "key" : ""}"><td class="act">`
     + `<button data-act="del" title="Delete">×</button><button data-act="key" title="Key event" aria-pressed="${!!r.key}">${r.key ? "★" : "☆"}</button></td>`
+    + (check ? `<td class="warn">${esc((r.warn || []).join("; "))}</td>` : "")
     + when(r, "date") + when(r, "end") + `<td class="gap muted">${r.gap}</td>`
     + `<td>${inp("class", "text", r.class, "cls")}</td><td>${inp("description", "text", r.description)}</td>`
     + (details ? DETAIL_COLS.map(c => `<td>${inp(c[0], "text", r[c[0]])}</td>`).join("") : "") + "</tr>").join("");
@@ -590,6 +621,7 @@ function drawFilters() {
 function render() {   // the only place that redraws: timeline and table can never disagree
   rows = sortRows(rows); save();
   $("tl").style.display = $("showTl").checked ? "" : "none";
+  $("depHint").hidden = !$("showDt").checked;
   $("tb").style.display = $("showTb").checked ? "" : "none";
   drawFilters();
   drawTable(draw());
@@ -609,7 +641,7 @@ $("first").onclick = () => { if (rows.length) { setView(P(num(rows[0].date)) - v
 $("fit").onclick = () => { const f = fitSpan(shownRows()); if (f) { setView(P(f[0]), f[1]); render(); } };
 document.querySelectorAll("[data-zoom]").forEach(b => b.onclick = () => {
   const span = +b.dataset.zoom; setView(P(view.start) + view.span / 2 - span / 2, span); render(); });
-["title", "showTl", "showTb", "showDt"].forEach(id => $(id).addEventListener("input", render));
+["title", "showTl", "showTb", "showDt", "scope"].forEach(id => $(id).addEventListener("input", render));
 $("compress").addEventListener("input", () => { expanded = []; render(); });   // toggling closes every opened gap again
 
 // filters

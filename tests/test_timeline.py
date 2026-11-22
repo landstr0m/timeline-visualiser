@@ -247,3 +247,22 @@ def test_break_text():
         "3 months",
         "2.2 years",
     ]
+
+
+# --------------------------------------------------------------- dependencies ----
+def test_dependency_flags_never_move_dates():
+    text = "id,date,end,class,description,depends_on\nA,2025-03-01,2025-03-10,Phase,Run,\n"
+    text += 'B,2025-03-05,,Review,Early,A\nC,2025-03-10,,Review,On time,A\nD,2025-03-12,,Review,Late,"A, X"\n'
+    rows, _ = tl.rows_from_text(text)
+    issues = tl.dependency_issues(rows)
+    by_ref = {r["ref"]: issues.get(r["id"], []) for r in rows}
+    assert by_ref == {
+        "A": [],
+        "B": ["Starts before A is due (10 Mar 2025)"],  # due = the end of A's band
+        "C": [],
+        "D": ["Depends on X, which is not in the data"],
+    }
+    flagged = tl.flag_rows(rows, issues)
+    early = next(r for r in flagged if r["ref"] == "B")
+    assert early["date"] == "2025-03-05"  # flagged, not moved
+    assert tl.label_head(early).startswith(tl.WARN_MARK) and tl.tip_lines(early)[-1].startswith(tl.WARN_MARK)
