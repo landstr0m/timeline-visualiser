@@ -165,6 +165,14 @@ user's machine or in browser storage. The live page and repo are public.
 
 ## Decisions
 
+- **Files over 500 lines kept whole (tidy-up 22 Nov 2026).** `web/index.html`
+  (~745), `timeline.py` (~660) and `app.py` (~530) passed 500 lines. The web page
+  must stay one file to be embeddable and work offline; `timeline.py` mirrors the
+  web page's pure functions name for name, which the parity test relies on.
+  Both are split into headed sections instead. The tidy-up removed a repeated
+  width sum (`plot_px` in `app.py`) and checked for dead code (none). Revisit if
+  a section passes ~200 lines or a third version appears.
+
 - **Exe built from a lock file (v1.1.2).** `requirements-lock.txt` pins every
   package to an exact version, so the same code always gives the same exe.
   The Tests workflow still installs from the ranges in `requirements.txt`, so a

@@ -55,12 +55,17 @@ def kept_rows(rows, hidden, timeline, search) -> list[dict]:
     return tl.filter_rows(rows, hidden or [], timeline, search or "")
 
 
+def plot_px(width) -> float:
+    """Width of the drawing area in px (the graph minus its side margins), as figure.py uses it."""
+    return max((width or 1100) - 60, 200)
+
+
 def gap_breaks(kept, compress, expanded, span, width) -> list[dict]:
     """The compressed gaps for this view, or none when *Compress gaps* is off."""
     if "Compress gaps" not in (compress or []):
         return []
     drawable = [r for r in kept if r["class"] or r["description"]]
-    return tl.find_breaks(drawable, span, max((width or 1100) - 60, 200) / span, expanded or [])
+    return tl.find_breaks(drawable, span, plot_px(width) / span, expanded or [])
 
 
 def view_range(view: dict) -> tuple[datetime, datetime]:
@@ -482,7 +487,7 @@ def render(rows, view, width, show, title, search, hidden, timeline, compress, e
     in_view = tl.in_view(kept, start, end)
     listed = tl.with_gaps(kept if scope == "all" else in_view)  # the table: everything, or only what is in view
     table = [{**{k: v for k, v in r.items() if k != "warn"}, "check": "; ".join(r.get("warn") or [])} for r in listed]
-    hourly = tl.tick_step(max((width or 1100) - 60, 200) / span)[0] == "hour"
+    hourly = tl.tick_step(plot_px(width) / span)[0] == "hour"
     stamp = "%d %b %Y %H:%M" if hourly else "%d %b %Y"  # show times in the caption once the axis shows hours
     caption = f"Showing {start:{stamp}} – {end:{stamp}} · {len(in_view)} of {len(rows)} events"
     if len(kept) < len(rows):

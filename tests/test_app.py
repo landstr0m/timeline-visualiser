@@ -43,6 +43,7 @@ def test_render_draws_sample_and_applies_filters():
     assert [c["id"] for c in columns] == ["date", "end", "gap", "class", "description"]
     assert "Deviation" in classes and names == [] and pick_style == {"display": "none"}
     assert fig.layout.title.text == "Demo" and tl_style == {} and tb_style == {}
+    assert hint == {"display": "none"}  # dependency help only with Details
 
     fig2, table2, columns2, caption2, *_ = app.render(
         rows, VIEW, 1100, ["Table", "Details"], "", "lab", ["Phase"], "gone", [], []

@@ -462,7 +462,7 @@ def find_breaks(rows: list[dict], span: float, px_per_day: float, expanded=()) -
             moments[start] = max(moments[start], room)
             moments.setdefault(when_num(r["end"]), 0)
     times, pad, out = sorted(moments), span * PAD_SHARE, []
-    for a, b in zip(times, times[1:]):
+    for a, b in zip(times, times[1:], strict=False):
         key = f"{num_when(a)}|{num_when(b)}"
         lo, hi = a + max(pad, moments[a]), b - pad
         if b - a >= span * GAP_SHARE and hi > lo and key not in expanded:

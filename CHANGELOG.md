@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Compressed-gap labels moved under the dates, clear of event labels
 - Table scope picker: *linked to view* (as before) or *all events* (feedback 21 Nov)
 - Dependencies: events that start before what they depend on is due, or name a missing id, get ⚠ and a Check column; dates never move. Instructions in the app (with Details) and README (feedback 21-22 Nov)
 - **Compress gaps** toggle: long stretches with no activity are cut from the axis, marked and labelled; open one gap with its × (partner feedback 22 Nov)
