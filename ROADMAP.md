@@ -33,7 +33,32 @@ Rank these together with the next round of feedback before building.
 - **Dependencies**: users expected linked events to move together. This is not
   built yet (item 3 below), so it read as broken. Needed: (a) clear
   instructions in the app and README on setting `id` and `depends_on`;
-  (b) when an event's date changes, its dependants move by the same amount.
+  (b) ~~when an event's date changes, its dependants move by the same amount~~
+  superseded 22 Nov, see below.
+
+## Feedback to sort (22 Nov 2026, partner)
+Liked: the app generally works well; copy-paste of activities was easy and the
+rows were ready in the table at once; the style is already good.
+- **Dependencies: flag, never move** (replaces 21 Nov item (b) and changes
+  Next item 3). Quote: *"I would prefer that it flags when a dependency happens
+  after a due date, and not that it automatically pushes the date, since this
+  might cause problems where items move unexpectedly."* So: dates only change
+  when the user edits them; an event that starts before something it depends
+  on has finished is marked (table row and timeline) with the reason in the
+  tooltip. Open: what "due date" means - the end of the predecessor's band,
+  or its single date.
+- **Compressed time axis** (optional, off by default). Long stretches with no
+  activity are squeezed so the events on both sides fit on one timeline.
+  - Each squeezed stretch is drawn as a visible break in the axis with a label
+    giving the time it holds, e.g. `1 week | (1 month) | 1 week`.
+  - Toggle *Compress gaps*: on / off.
+  - Each break label has an **×** that expands that break only; the others stay compressed.
+  - Turning the toggle off and on again resets: every break is compressed again.
+  - To decide before building: the minimum gap that counts as "long" (fixed,
+    e.g. 7 days, or relative to the zoom); whether a band running through the
+    gap counts as activity (a long phase band would stop any compression);
+    how drag, zoom, Today and the 6-month limit behave across a break; and
+    that the PNG shows the breaks clearly, so no one reads distances as real.
 
 ## Must do before raising `dash<5`
 - Replace Dash `DataTable` (deprecated; bug #4). Candidate: `dash-ag-grid`;
@@ -42,7 +67,7 @@ Rank these together with the next round of feedback before building.
 ## Next (pick in order)
 1. **Swimlanes**: draw each `timeline` in its own horizontal strip (the column and the picker already exist)
 2. **Measure**: click two events to show the elapsed time between them on the picture
-3. **Dependencies**: moving an event shifts its dependants by the same duration (`id` and `depends_on` are already stored)
+3. **Dependencies**: flag an event that starts before an event it depends on is due; never move dates automatically (`id` and `depends_on` are already stored; changed 22 Nov after feedback)
 4. **Overlap/clash view** between timelines
 5. **Report export**: picture plus table as one printable page
 6. **Excel loading in the web version** (needs an unzip step; check it can stay library-free)

@@ -120,7 +120,7 @@ files (missing column = blank, files without them still load):
 | `timeline` | Several named timelines in one file; also the basis for clash checks between timelines |
 | `owner` | Who is responsible for the event |
 | `source` | Which file or system the row came from |
-| `depends_on` | Ids this event follows; moving one shifts its dependants by the same number of days |
+| `depends_on` | Ids this event follows; planned: flag the event if it starts before a predecessor is due (dates are never moved automatically) |
 | `key` | `yes` marks a key event |
 
 All six are read, kept, editable under *Details* and written back since
