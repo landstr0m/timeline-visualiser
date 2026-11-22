@@ -5,9 +5,15 @@ hundred events over hours to months, edited by one person, pasted into a
 report or slide. Features are judged against that; anything that makes the
 page busier needs a strong reason.
 
+## Status (22 Nov 2026)
+In general use, off main development: bug reports and usage notes are collected
+in `BUGS.md` until the review in February 2027 (Linear AND-69). A critical bug
+(data loss, wrong dates or positions, app/exe not starting, security) brings the
+review forward.
+
 ## Done
 
-### Unreleased (22 Nov 2026)
+### v1.2.0 (22 Nov 2026) - partner feedback
 - Compress gaps: optional toggle, zig-zag break with the quiet time, × opens one gap
 - Table scope: linked to view / all events
 - Dependencies: flag (⚠, Check column, tooltip), never move; instructions in app and README

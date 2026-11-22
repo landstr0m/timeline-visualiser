@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.2.0 - 2026-11-22 (partner feedback)
 - Compressed-gap labels moved under the dates, clear of event labels
 - Table scope picker: *linked to view* (as before) or *all events* (feedback 21 Nov)
 - Dependencies: events that start before what they depend on is due, or name a missing id, get ⚠ and a Check column; dates never move. Instructions in the app (with Details) and README (feedback 21-22 Nov)
