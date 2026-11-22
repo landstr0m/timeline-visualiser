@@ -29,6 +29,8 @@
 | 23 | Undo | `undo` store in `update_rows`; `change()` in the web version |
 | 24 | Fit all events in view | `fit_span`, `fit_view` |
 | 25 | Copy the picture to the clipboard | browser-side snippet in `app.py`; `toPng` in the web version |
+| 27 | Table lists events in view or all events | *scope* picker; `render` / `draw` |
+| 28 | Flag dependency problems, never move dates | `dependency_issues`, `flag_rows`, `band_name`; Check column |
 | 26 | Compress long quiet stretches (toggle, per-gap expand) | `find_breaks`, `squash`, `unsquash`, `break_text`; Plotly `rangebreaks` + `_breaks` in `figure.py` |
 
 Function names above are the Python ones; `web/index.html` has the same
@@ -146,7 +148,7 @@ files (missing column = blank, files without them still load):
 | `timeline` | Several named timelines in one file; also the basis for clash checks between timelines |
 | `owner` | Who is responsible for the event |
 | `source` | Which file or system the row came from |
-| `depends_on` | Ids this event follows; planned: flag the event if it starts before a predecessor is due (dates are never moved automatically) |
+| `depends_on` | Ids this event follows; the event is flagged if it starts before one of them is due (its end, else its date) or names a missing id. Dates are never moved automatically: moving linked events surprised testers (feedback 22 Nov 2026) |
 | `key` | `yes` marks a key event |
 
 All six are read, kept, editable under *Details* and written back since

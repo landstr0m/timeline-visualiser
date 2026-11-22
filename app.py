@@ -4,7 +4,7 @@ This file only wires the page: what is on it, and which function runs when
 something is clicked. Logic is in timeline.py, drawing in figure.py.
 
 State lives in browser-side stores:
-  rows : every event (the table only shows those inside the visible range)
+  rows : every event (the table shows those in view, or all of them)
   view : the visible date range {start, end, n}
   undo : earlier versions of `rows`, newest last (lost when the page closes)
 `rows` and `view` are kept in the browser's local storage, so data persists
@@ -67,9 +67,17 @@ def view_range(view: dict) -> tuple[datetime, datetime]:
     return datetime.fromisoformat(view["start"]), datetime.fromisoformat(view["end"])
 
 
-def table_columns(details: bool) -> list[dict]:
-    """Table columns. The optional ones appear only when *Details* is ticked."""
-    columns = [
+DEP_HINT = (
+    "Dependencies: give an event an Id, then put that Id under Depends on for each event that follows it"
+    " (several: separate with commas). An event that starts before the one it depends on is due (its end date,"
+    " or its date if it has none) is marked ⚠ with the reason. Dates never move by themselves."
+)
+
+
+def table_columns(details: bool, check: bool = False) -> list[dict]:
+    """Table columns. The optional ones appear only when *Details* is ticked; Check only when something is flagged."""
+    columns = [{"name": "Check", "id": "check", "editable": False}] if check else []
+    columns += [
         {"name": "Start (YYYY-MM-DD [HH:MM])", "id": "date"},
         {"name": "End (optional)", "id": "end"},
         {"name": "Gap", "id": "gap", "editable": False},
@@ -194,8 +202,22 @@ app.layout = html.Div(
                         html.Button("Undo", id="undo-btn", style=btn, title="Take back the last change to the events"),
                         html.Button("Clear all", id="clear", style=btn),
                         html.Span(id="status", style={"color": "#6b6a62"}),
+                        dcc.RadioItems(
+                            id="scope",
+                            options=[
+                                {"label": "Table: linked to view", "value": "view"},
+                                {"label": "All events", "value": "all"},
+                            ],
+                            value="view",
+                            inline=True,
+                            persistence=True,
+                            inputStyle={"marginRight": "4px"},
+                            labelStyle={"marginRight": "12px"},
+                            style={"marginLeft": "10px"},
+                        ),
                     ],
                 ),
+                html.Div(DEP_HINT, id="dep-hint", style={"color": "#6b6a62", "margin": "4px 0", "fontSize": "14px"}),
                 dash_table.DataTable(
                     id="table",
                     editable=True,
@@ -213,6 +235,7 @@ app.layout = html.Div(
                         {"if": {"column_id": "date"}, "width": "190px"},
                         {"if": {"column_id": "end"}, "width": "150px"},
                         {"if": {"column_id": "gap"}, "width": "90px", "color": "#6b6a62"},
+                        {"if": {"column_id": "check"}, "width": "180px", "color": "#b3261e"},
                         {"if": {"column_id": "class"}, "width": "160px", "fontWeight": "600"},
                     ],
                     style_data_conditional=[{"if": {"filter_query": '{key} = "yes"'}, "backgroundColor": "#fff8e1"}],
@@ -430,6 +453,7 @@ def update_rows(_ts, _a, contents, _pa, _c, _u, table, previous, rows, view, fil
     Output("timeline-pick", "options"),
     Output("timeline-pick", "style"),
     Output("break-buttons", "children"),
+    Output("dep-hint", "style"),
     Input("rows", "data"),
     Input("view", "data"),
     Input("width", "data"),
@@ -440,24 +464,27 @@ def update_rows(_ts, _a, contents, _pa, _c, _u, table, previous, rows, view, fil
     Input("timeline-pick", "value"),
     Input("compress", "value"),
     Input("expanded", "data"),
+    Input("scope", "value"),
 )
-def render(rows, view, width, show, title, search, hidden, timeline, compress, expanded):
-    """Redraw the timeline and filter the table to the visible range.
+def render(rows, view, width, show, title, search, hidden, timeline, compress, expanded, scope="view"):
+    """Redraw the timeline and fill the table (events in view, or all events).
 
     This is the only place that draws, so timeline and table can never disagree.
     """
     if view is None:
-        return (no_update,) * 10
+        return (no_update,) * 11
     rows = rows or []
     start, _end = view_range(view)
     span, names = view_span(view), tl.timelines(rows)
-    kept = kept_rows(rows, hidden, timeline, search)
+    kept = tl.flag_rows(kept_rows(rows, hidden, timeline, search), tl.dependency_issues(rows))
     breaks = gap_breaks(kept, compress, expanded, span, width)
     end = tl.num_datetime(tl.unsquash(breaks, tl.squash(breaks, tl.datetime_num(start)) + span))
-    visible = tl.with_gaps(tl.in_view(kept, start, end))
+    in_view = tl.in_view(kept, start, end)
+    listed = tl.with_gaps(kept if scope == "all" else in_view)  # the table: everything, or only what is in view
+    table = [{**{k: v for k, v in r.items() if k != "warn"}, "check": "; ".join(r.get("warn") or [])} for r in listed]
     hourly = tl.tick_step(max((width or 1100) - 60, 200) / span)[0] == "hour"
     stamp = "%d %b %Y %H:%M" if hourly else "%d %b %Y"  # show times in the caption once the axis shows hours
-    caption = f"Showing {start:{stamp}} – {end:{stamp}} · {len(visible)} of {len(rows)} events"
+    caption = f"Showing {start:{stamp}} – {end:{stamp}} · {len(in_view)} of {len(rows)} events"
     if len(kept) < len(rows):
         caption += f" · filter on ({len(rows) - len(kept)} hidden)"
     shown_breaks = [b for b in breaks if tl.datetime_num(start) < b["lo"] < tl.datetime_num(end)]
@@ -471,10 +498,13 @@ def render(rows, view, width, show, title, search, hidden, timeline, compress, e
         for b in shown_breaks
     ]
     hide = {"display": "none"}
+    flagged = [r for r in kept if r.get("warn")]
+    if flagged:
+        caption += f" · ⚠ {len(flagged)} dependency problem(s)"
     return (
         fig,
-        visible,
-        table_columns("Details" in show),
+        table,
+        table_columns("Details" in show, any(r["check"] for r in table)),
         caption,
         {} if "Timeline" in show else hide,
         {} if "Table" in show else hide,
@@ -482,6 +512,7 @@ def render(rows, view, width, show, title, search, hidden, timeline, compress, e
         names,
         {"minWidth": "180px"} if names else hide,
         buttons,
+        {"color": "#6b6a62", "margin": "4px 0", "fontSize": "14px"} if "Details" in show else hide,
     )
 
 

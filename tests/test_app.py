@@ -26,14 +26,16 @@ def find_ids(node, found=None):
 def test_page_has_every_control_the_callbacks_use():
     ids = find_ids(app.app.layout)
     wanted = "rows view undo graph table title show search hide timeline-pick prev next today first fit capture copy"
-    wanted += " add upload save undo-btn clear paste paste-add status caption compress expanded break-buttons"
+    wanted += (
+        " add upload save undo-btn clear paste paste-add status caption compress expanded break-buttons scope dep-hint"
+    )
     assert set(wanted.split()) <= ids
 
 
 def test_render_draws_sample_and_applies_filters():
     rows = app.rows0
     assert len(rows) == 18
-    fig, table, columns, caption, tl_style, tb_style, classes, names, pick_style, gaps = app.render(
+    fig, table, columns, caption, tl_style, tb_style, classes, names, pick_style, gaps, hint = app.render(
         rows, VIEW, 1100, ["Timeline", "Table"], "Demo", "", [], None, [], []
     )
     assert len(table) == 15 and "15 of 18" in caption and "filter" not in caption
@@ -63,15 +65,26 @@ def test_upload_reader_handles_text_with_bom():
 def test_compress_gaps_brings_far_events_into_view():
     rows = [tl.make_row(d, "A", "x") for d in ("2026-01-01", "2026-01-03", "2026-03-01", "2026-03-03")]
     view = app.view_dict(datetime(2025, 12, 31), datetime(2026, 1, 31))
-    *_, caption, _a, _b, _c, _d, _e, gaps = app.render(rows, view, 1100, ["Table"], "", "", [], None, [], [])
+    *_, caption, _a, _b, _c, _d, _e, gaps, _h = app.render(rows, view, 1100, ["Table"], "", "", [], None, [], [])
     assert "2 of 4" in caption and gaps == []
-    fig, table, _c, caption, *_rest, gaps = app.render(
+    fig, table, _c, caption, *_rest, gaps, _h = app.render(
         rows, view, 1100, ["Table"], "", "", [], None, ["Compress gaps"], []
     )
     assert len(table) == 4 and "1 gap(s) compressed" in caption
     assert gaps[0].children == "(57 days) ×" and len(fig.layout.xaxis.rangebreaks) == 1
     key = gaps[0].id["expand"]
-    *_, caption, _a, _b, _c, _d, _e, gaps = app.render(
+    *_, caption, _a, _b, _c, _d, _e, gaps, _h = app.render(
         rows, view, 1100, ["Table"], "", "", [], None, ["Compress gaps"], [key]
     )
     assert "2 of 4" in caption and gaps == []
+
+
+def test_table_scope_and_dependency_check_column():
+    rows, _ = tl.rows_from_text("id,date,class,description,depends_on\nA,2026-01-20,X,first,\nB,2026-01-10,X,early,A\n")
+    rows.append(tl.make_row("2026-06-01", "X", "far away"))
+    view = app.view_dict(datetime(2026, 1, 1), datetime(2026, 2, 1))
+    _f, table, columns, caption, *_ = app.render(rows, view, 1100, ["Table"], "", "", [], None, [], [], "view")
+    assert len(table) == 2 and "⚠ 1 dependency problem(s)" in caption
+    assert columns[0]["id"] == "check" and table[0]["check"] == "Starts before A is due (20 Jan 2026)"
+    _f, table, *_ = app.render(rows, view, 1100, ["Table"], "", "", [], None, [], [], "all")
+    assert len(table) == 3

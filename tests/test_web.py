@@ -38,6 +38,9 @@ CASES = [
     "2025-03-11,,Results,pH data,Ben,,Line 2,E2,E1,\n2025-03-12 25:00,,Results,bad time,,,,,,\n",
     "2025-01-01,A,x\n2027-01-01,A,y\n",
     "2025-03-10 00:00,A,midnight is a plain date\n",
+    # dependencies: B starts before A's band ends, D names a missing id
+    "id,date,end,class,description,depends_on\nA,2025-03-01,2025-03-10,Phase,Run,\nB,2025-03-05,,Review,Early,A\n"
+    'C,2025-03-10,,Review,On time,A\nD,2025-03-12,,Review,Late,"A; X"\n',
 ]
 
 # Runs after the page's pure functions; prints one JSON object with every result.
@@ -51,6 +54,8 @@ const out = cases.map(t => {
     timelines: timelines(rows), found: strip(filterRows(rows, ["Results"], "", "a")),
     fit: fit && [fit[0] - lo, fit[1]], seen: strip(inSpan(rows, lo + 0.5, lo + 1.5)),
     back: rows.map(r => numWhen(num(r.date))),
+    issues: (iss => rows.map(r => iss[r.id] || []))(dependencyIssues(rows)),
+    flaggedHeads: flagRows(rows, dependencyIssues(rows)).map(r => [labelHead(r, false), tipLines(r)]),
     breaks: [7, 30].map(span => findBreaks(rows, span, 40, []).map(b => [b.key, b.lo - lo, b.hi - lo, b.gap])) };
 });
 const ticks = [5, 11, 22, 34, 87, 88, 150, 351, 1040, 1100].map(tickStep);
@@ -124,6 +129,9 @@ def test_web_matches_python(web, i):
     assert keys == [[x[0] for x in w] for w in want]
     numbers = [n for w in got["breaks"] for x in w for n in x[1:]]
     assert numbers == pytest.approx([n for w in want for x in w for n in x[1:]])
+    issues = tl.dependency_issues(rows)
+    assert got["issues"] == [issues.get(r["id"], []) for r in rows]
+    assert got["flaggedHeads"] == [[tl.label_head(r), tl.tip_lines(r)] for r in tl.flag_rows(rows, issues)]
     assert got["back"] == [tl.num_when(tl.when_num(r["date"])) for r in rows]
     fit = tl.fit_span(rows)
     assert got["fit"] == pytest.approx([fit[0] - lo, fit[1]])

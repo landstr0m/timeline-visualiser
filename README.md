@@ -53,6 +53,8 @@ pyinstaller --onefile --name TimelineVisualiser --add-data "sample_events.csv:."
 | See long timelines on one screen | Tick **Compress gaps**: any stretch with no activity that takes up 30% or more of the view is cut out of the axis, shown as a zig-zag with the quiet time, e.g. `(1 month)`. Click a gap's label (web) or its button under the timeline (Python) to open that gap only; switching the toggle off and on closes them all again. The breaks always appear in captured pictures |
 | See elapsed time | The **Gap** column shows the time since the previous listed event; hover a band for its length |
 | Declutter | Search box; click a class chip (web) or use *Hide classes* (Python); pick a timeline if the data names several. Filters only change what is shown |
+| List every event in the table | Switch the table from *linked to view* to *all events* (next to Clear all) |
+| Link events (dependencies) | Tick **Details**, give an event an **Id**, and put that Id under **Depends on** in each event that follows it (several: separate with commas). An event that starts before the one it depends on is due (its end date, or its date if it has none) gets ⚠ on the timeline, its reason in the tooltip and a **Check** column in the table. Dates never move by themselves |
 | Record owner / source | Tick **Details** for the Owner, Source, Timeline, Id and Depends-on columns |
 | Take back a mistake | **Undo** (last 10 changes, including deletes and Clear all; forgotten when the page closes) |
 | Paste events | Open *Paste rows from Excel or CSV*, paste, **Add pasted rows** |
