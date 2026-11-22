@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- **Compress gaps** toggle: long stretches with no activity are cut from the axis, marked and labelled; open one gap with its × (partner feedback 22 Nov)
 - Exe built from `requirements-lock.txt` (exact versions)
 - Notes: DataTable deprecation (bug #4), partner feedback in roadmap
 

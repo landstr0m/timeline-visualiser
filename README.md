@@ -50,6 +50,7 @@ pyinstaller --onefile --name TimelineVisualiser --add-data "sample_events.csv:."
 | Make it a band | Fill in the **End** date; clear it to go back to a single date |
 | Give it a time | Web: fill the time box next to the date (shown with **Details**, or once any event has a time). Python: type `2026-11-03 09:15` |
 | Mark a key event | Web: click the star. Python: tick **Details** and type `yes` under *Key* |
+| See long timelines on one screen | Tick **Compress gaps**: any stretch with no activity that takes up 30% or more of the view is cut out of the axis, shown as a zig-zag with the quiet time, e.g. `(1 month)`. Click a gap's label (web) or its button under the timeline (Python) to open that gap only; switching the toggle off and on closes them all again. The breaks always appear in captured pictures |
 | See elapsed time | The **Gap** column shows the time since the previous listed event; hover a band for its length |
 | Declutter | Search box; click a class chip (web) or use *Hide classes* (Python); pick a timeline if the data names several. Filters only change what is shown |
 | Record owner / source | Tick **Details** for the Owner, Source, Timeline, Id and Depends-on columns |
@@ -101,6 +102,7 @@ date,end,class,description
 | Key event | *Key* column under Details | Star button on each row |
 | Hide classes | Drop-down | Click the class chips |
 | Redraw while dragging | On release | Live |
+| Compressed gap | `//` on the axis; open it with a button under the timeline | Zig-zag on the axis; open it by clicking its label |
 | Wheel | Zooms | Zooms; Shift+wheel scrolls sideways |
 | Needs | Python (or the exe) | Any modern browser |
 

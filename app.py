@@ -37,8 +37,30 @@ UNDO_DEPTH = 10
 FONT = "Segoe UI, Helvetica, Arial, sans-serif"
 
 
-def view_dict(start: datetime, end: datetime, n: int = 0) -> dict:
-    return {"start": start.isoformat(), "end": end.isoformat(), "n": n}
+def view_dict(start: datetime, end: datetime, n: int = 0, span: float | None = None) -> dict:
+    """`span` is the width of the view in days on the axis; with compressed gaps it is less than end - start."""
+    span = span if span is not None else (end - start).total_seconds() / 86400
+    return {"start": start.isoformat(), "end": end.isoformat(), "n": n, "span": span}
+
+
+def view_span(view: dict) -> float:
+    start, end = view_range(view)
+    return view.get("span") or (end - start).total_seconds() / 86400
+
+
+def kept_rows(rows, hidden, timeline, search) -> list[dict]:
+    """Rows left after the filters (a picked timeline that no longer exists is ignored)."""
+    rows = rows or []
+    timeline = timeline if timeline in tl.timelines(rows) else ""
+    return tl.filter_rows(rows, hidden or [], timeline, search or "")
+
+
+def gap_breaks(kept, compress, expanded, span, width) -> list[dict]:
+    """The compressed gaps for this view, or none when *Compress gaps* is off."""
+    if "Compress gaps" not in (compress or []):
+        return []
+    drawable = [r for r in kept if r["class"] or r["description"]]
+    return tl.find_breaks(drawable, span, max((width or 1100) - 60, 200) / span, expanded or [])
 
 
 def view_range(view: dict) -> tuple[datetime, datetime]:
@@ -85,6 +107,7 @@ app.layout = html.Div(
         dcc.Store(id="rows", data=rows0, storage_type="local"),  # sample only until the user has data
         dcc.Store(id="view", storage_type="local"),
         dcc.Store(id="undo", data=[]),
+        dcc.Store(id="expanded", data=[]),  # compressed gaps opened with their x; reset by the toggle
         dcc.Store(id="width", data=1100),
         dcc.Interval(id="tick", interval=1500),
         dcc.Download(id="download"),
@@ -120,6 +143,14 @@ app.layout = html.Div(
                 html.Button("Today", id="today", style=btn),
                 html.Button("First event", id="first", style=btn),
                 html.Button("Fit all", id="fit", style=btn, title="Show every event (up to six months)"),
+                dcc.Checklist(
+                    id="compress",
+                    options=["Compress gaps"],
+                    value=[],
+                    persistence=True,
+                    inputStyle={"marginRight": "4px"},
+                    style={"marginLeft": "10px"},
+                ),
                 html.Span("Zoom:", style={"marginLeft": "10px"}),
                 *[html.Button(name, id={"zoom": days}, style=btn) for name, days in ZOOMS.items()],
                 html.Button("Capture PNG", id="capture", style={**btn, "marginLeft": "10px", "fontWeight": "600"}),
@@ -147,6 +178,7 @@ app.layout = html.Div(
             id="timeline-box",
             children=dcc.Graph(id="graph", config={"scrollZoom": True, "displayModeBar": False, "doubleClick": False}),
         ),
+        html.Div(id="break-buttons", style={**bar, "margin": "4px 0"}),
         html.Div(id="caption", style={"color": "#6b6a62", "margin": "6px 0"}),
         html.Div(
             id="table-box",
@@ -255,15 +287,28 @@ clientside_callback(
     Input({"zoom": ALL}, "n_clicks"),
     Input("rows", "data"),
     State("view", "data"),
+    State("hide", "value"),
+    State("timeline-pick", "value"),
+    State("search", "value"),
+    State("compress", "value"),
+    State("expanded", "data"),
+    State("width", "data"),
 )
-def update_view(relayout, _p, _n, _t, _f, _fit, _z, rows, view):
-    """Every pan, zoom and button press ends up here and sets the visible range."""
+def update_view(relayout, _p, _n, _t, _f, _fit, _z, rows, view, hidden, timeline, search, compress, expanded, width):
+    """Every pan, zoom and button press ends up here and sets the visible range.
+
+    Moves are worked out in axis positions (see timeline.squash), so with
+    compressed gaps one step still moves half a screen.
+    """
     if view is None:  # first ever run: one month around the data
         return view_dict(*tl.default_view(rows or []))
     if ctx.triggered_id in (None, "rows"):
         return no_update
-    start, end = view_range(view)
-    span, centre, trig = end - start, start + (end - start) / 2, ctx.triggered_id
+    start, _end = view_range(view)
+    span, trig = view_span(view), ctx.triggered_id
+    kept = kept_rows(rows, hidden, timeline, search)
+    breaks = gap_breaks(kept, compress, expanded, span, width)
+    pos = tl.squash(breaks, tl.datetime_num(start))
     if trig == "graph":
         r = relayout or {}
         lo, hi = r.get("xaxis.range[0]"), r.get("xaxis.range[1]")
@@ -271,22 +316,42 @@ def update_view(relayout, _p, _n, _t, _f, _fit, _z, rows, view):
             lo, hi = r["xaxis.range"]
         if lo is None or hi is None:
             return no_update
-        start, end = pd.Timestamp(lo).to_pydatetime(), pd.Timestamp(hi).to_pydatetime()
+        lo, hi = (tl.datetime_num(pd.Timestamp(v).to_pydatetime()) for v in (lo, hi))
+        pos, span = tl.squash(breaks, lo), tl.squash(breaks, hi) - tl.squash(breaks, lo)
     elif trig in ("prev", "next"):
-        shift = span / 2 if trig == "next" else -span / 2
-        start, end = start + shift, end + shift
-    elif trig in ("today", "first"):
-        centre = datetime.now()
-        if trig == "first" and rows:
-            centre = tl.num_datetime(tl.when_num(rows[0]["date"])) + span / 2 - span / 31
-        start, end = centre - span / 2, centre + span / 2
+        pos += span / 2 if trig == "next" else -span / 2
+    elif trig == "today":
+        pos = tl.squash(breaks, tl.datetime_num(datetime.now())) - span / 2
+    elif trig == "first" and rows:
+        pos = tl.squash(breaks, tl.when_num(rows[0]["date"])) - span / 31
     elif trig == "fit":
-        start, end = tl.fit_view(rows or [])
+        fit_start, fit_end = tl.fit_view(rows or [])
+        pos, span = tl.datetime_num(fit_start), (fit_end - fit_start).total_seconds() / 86400
+        breaks = []
     elif isinstance(trig, dict):
-        half = timedelta(days=trig["zoom"] / 2)
-        start, end = centre - half, centre + half
-    start, end = tl.clamp_view(start, end)
-    return view_dict(start, end, view["n"] + 1)  # n forces a redraw even if clamped back
+        pos, span = pos + span / 2 - trig["zoom"] / 2, trig["zoom"]
+    clamped = min(max(span, tl.MIN_DAYS), tl.MAX_DAYS)
+    pos, span = pos + (span - clamped) / 2, clamped
+    start = tl.num_datetime(tl.unsquash(breaks, pos))
+    end = start + timedelta(days=span)  # the real end is worked out in render
+    return view_dict(start, end, view["n"] + 1, span)  # n forces a redraw even if clamped back
+
+
+@callback(
+    Output("expanded", "data"),
+    Input({"expand": ALL}, "n_clicks"),
+    Input("compress", "value"),
+    State("expanded", "data"),
+    prevent_initial_call=True,
+)
+def expand_gap(_clicks, _compress, expanded):
+    """The x on a gap button opens that gap only; switching the toggle closes them all again."""
+    trig = ctx.triggered_id
+    if trig == "compress":
+        return []
+    if isinstance(trig, dict) and ctx.triggered[0]["value"]:
+        return (expanded or []) + [trig["expand"]]
+    return no_update
 
 
 def read_upload(contents: str, filename: str | None) -> tuple[list[dict], int]:
@@ -364,6 +429,7 @@ def update_rows(_ts, _a, contents, _pa, _c, _u, table, previous, rows, view, fil
     Output("hide", "options"),
     Output("timeline-pick", "options"),
     Output("timeline-pick", "style"),
+    Output("break-buttons", "children"),
     Input("rows", "data"),
     Input("view", "data"),
     Input("width", "data"),
@@ -372,28 +438,38 @@ def update_rows(_ts, _a, contents, _pa, _c, _u, table, previous, rows, view, fil
     Input("search", "value"),
     Input("hide", "value"),
     Input("timeline-pick", "value"),
+    Input("compress", "value"),
+    Input("expanded", "data"),
 )
-def render(rows, view, width, show, title, search, hidden, timeline):
+def render(rows, view, width, show, title, search, hidden, timeline, compress, expanded):
     """Redraw the timeline and filter the table to the visible range.
 
     This is the only place that draws, so timeline and table can never disagree.
     """
     if view is None:
-        return (no_update,) * 9
+        return (no_update,) * 10
     rows = rows or []
-    start, end = view_range(view)
-    names = tl.timelines(rows)
-    if timeline not in names:  # the picked timeline no longer exists
-        timeline = ""
-    kept = tl.filter_rows(rows, hidden or [], timeline or "", search or "")
+    start, _end = view_range(view)
+    span, names = view_span(view), tl.timelines(rows)
+    kept = kept_rows(rows, hidden, timeline, search)
+    breaks = gap_breaks(kept, compress, expanded, span, width)
+    end = tl.num_datetime(tl.unsquash(breaks, tl.squash(breaks, tl.datetime_num(start)) + span))
     visible = tl.with_gaps(tl.in_view(kept, start, end))
-    hourly = tl.tick_step(max((width or 1100) - 60, 200) / ((end - start).total_seconds() / 86400))[0] == "hour"
+    hourly = tl.tick_step(max((width or 1100) - 60, 200) / span)[0] == "hour"
     stamp = "%d %b %Y %H:%M" if hourly else "%d %b %Y"  # show times in the caption once the axis shows hours
     caption = f"Showing {start:{stamp}} – {end:{stamp}} · {len(visible)} of {len(rows)} events"
     if len(kept) < len(rows):
         caption += f" · filter on ({len(rows) - len(kept)} hidden)"
+    shown_breaks = [b for b in breaks if tl.datetime_num(start) < b["lo"] < tl.datetime_num(end)]
+    if shown_breaks:
+        caption += f" · {len(shown_breaks)} gap(s) compressed"
     drawable = [r for r in kept if r["class"] or r["description"]]
-    fig = build_figure(drawable, start, end, width or 1100, title or "", datetime.now(), tl.class_colours(rows))
+    colours = tl.class_colours(rows)
+    fig = build_figure(drawable, start, end, width or 1100, title or "", datetime.now(), colours, breaks)
+    buttons = [
+        html.Button(f"({tl.break_text(b['gap'])}) ×", id={"expand": b["key"]}, title="Expand this gap", style=btn)
+        for b in shown_breaks
+    ]
     hide = {"display": "none"}
     return (
         fig,
@@ -405,6 +481,7 @@ def render(rows, view, width, show, title, search, hidden, timeline):
         sorted({r["class"] for r in rows if r["class"]}, key=str.lower),
         names,
         {"minWidth": "180px"} if names else hide,
+        buttons,
     )
 
 

@@ -59,6 +59,7 @@
   <button id="prev" title="Earlier">◀</button><button id="next" title="Later">▶</button>
   <button id="today">Today</button><button id="first">First event</button>
   <button id="fit" title="Show every event (up to six months)">Fit all</button>
+  <label title="Squeeze long stretches with no events; click a gap's label to open it again" style="margin-left:10px"><input type="checkbox" id="compress"> Compress gaps</label>
   <span style="margin-left:10px">Zoom:</span>
   <button data-zoom="1">1 day</button><button data-zoom="7">1 week</button><button data-zoom="14">2 weeks</button>
   <button data-zoom="31">1 month</button><button data-zoom="92">3 months</button><button data-zoom="184">6 months</button>
@@ -111,7 +112,8 @@ const COLUMNS = ["date", "end", "class", "description"];                   // al
 const EXTRAS = ["id", "timeline", "owner", "source", "depends_on", "key"];  // written only when used
 const field = c => c === "id" ? "ref" : c;                                 // CSV column name -> row field
 const EXTRA_FIELDS = EXTRAS.map(field);
-const UNDO_DEPTH = 10;
+const UNDO_DEPTH = 10, CHAR_PX = 7;
+const GAP_SHARE = 0.3, PAD_SHARE = 0.05;   // compressed gaps: a gap this share of the view is cut, leaving this much each side
 const ALIASES = { date: "date", day: "date", when: "date", start: "date", "start date": "date", from: "date",
   end: "end", "end date": "end", finish: "end", to: "end", until: "end",
   class: "class", title: "class", type: "class", category: "class",
@@ -288,6 +290,44 @@ function fitSpan(rs) {
   return [lo - span * 0.05, span];
 }
 
+// --------------------------------------------------------------- breaks ----
+// "Compress gaps" (same rules as find_breaks in timeline.py): a stretch with no activity that is at
+// least GAP_SHARE of the visible span is cut out of the axis, leaving PAD_SHARE of the span each side.
+// Event dates and band starts/ends are the activity. Positions on a compressed axis are "display" day
+// numbers: real day numbers minus the hidden time before them.
+function findBreaks(rs, span, ppd, expanded = []) {   // -> [{ key, lo, hi, gap }] in date order
+  const room = new Map();   // moment -> room its band label needs to the right, in days
+  for (const r of rs) {
+    const s = num(r.date); if (!room.has(s)) room.set(s, 0);
+    if (r.end) {
+      const name = (r.key ? KEY_MARK : "") + (r.class || "Event");
+      room.set(s, Math.max(room.get(s), ((name.length + r.description.length + 2) * CHAR_PX + 16) / ppd));
+      if (!room.has(num(r.end))) room.set(num(r.end), 0);
+    }
+  }
+  const t = [...room.keys()].sort((a, b) => a - b), pad = span * PAD_SHARE, out = [];
+  for (let i = 1; i < t.length; i++) {
+    const a = t[i - 1], b = t[i], key = `${numWhen(a)}|${numWhen(b)}`, lo = a + Math.max(pad, room.get(a)), hi = b - pad;
+    if (b - a >= span * GAP_SHARE && hi > lo && !expanded.includes(key)) out.push({ key, lo, hi, gap: b - a });
+  }
+  return out;
+}
+function squash(breaks, x) {   // real day number -> display day number
+  let d = x;
+  for (const b of breaks) { if (x <= b.lo) break; d -= Math.min(x, b.hi) - b.lo; }
+  return d;
+}
+function unsquash(breaks, d) {   // display day number -> real day number; a break's own point maps to its start
+  for (const b of breaks) { if (d <= b.lo) break; d += b.hi - b.lo; }
+  return d;
+}
+function breakText(days) {   // "7 h", "15 days", "3 months", "2.2 years"
+  if (days < 1) return `${Math.round(days * 24)} h`;
+  if (days < 60) { const n = Math.round(days); return `${n} day${n !== 1 ? "s" : ""}`; }
+  if (days < 730) return `${Math.round(days / 30.44)} months`;
+  return `${Math.round(days / 365.25 * 10) / 10} years`;
+}
+
 // ----------------------------------------------------------------- text ----
 // Elapsed time from a to b: "3 d", "1 d 4 h", "2 h 15 min". Without a time on
 // both sides, whole calendar days are counted.
@@ -337,11 +377,13 @@ if (!view) {   // one month: the current month if it has events, else the first 
 }
 let filt = { hidden: [], timeline: "", text: "", ...store.get("filter", {}) };   // what to leave out of the picture and table
 let undoStack = [];                                      // earlier versions of `rows` for Undo; not stored
+let expanded = [];                                       // keys of compressed gaps opened with their ×; reset by the toggle
+$("compress").checked = store.get("compress", false);
 $("title").value = store.get("title", "");
 $("search").value = filt.text;
 $("showDt").checked = store.get("details", false);
 const save = () => { store.set("rows", rows); store.set("view", view); store.set("title", $("title").value);
-  store.set("filter", filt); store.set("details", $("showDt").checked); };
+  store.set("filter", filt); store.set("details", $("showDt").checked); store.set("compress", $("compress").checked); };
 const say = msg => $("status").textContent = msg;
 // Every change to the events goes through here, so Undo always has the previous version.
 function change(next, msg) {
@@ -366,7 +408,7 @@ function wrap(text, width, maxLines) {
 
 // Single-date events: each label takes the lowest lane whose previous label has ended.
 // If that needs more than MAX_LANES lanes, shorten the text and try again.
-function layoutLabels(rs, ppd, showDate) {
+function layoutLabels(rs, ppd, showDate, pos = x => x) {   // pos: day number -> axis position (see squash)
   let placed = [];
   for (const [width, maxLines] of LEVELS) {
     placed = []; const laneEnd = [];
@@ -374,8 +416,8 @@ function layoutLabels(rs, ppd, showDate) {
       const x = num(r.date);
       const lines = [labelHead(r, showDate), ...(width && r.description ? wrap(r.description, width, maxLines) : [])];
       const px = Math.max(...lines.map((s, i) => textW(s, i === 0))) + 16;
-      let lane = laneEnd.findIndex(e => e <= x); if (lane < 0) lane = laneEnd.length;
-      laneEnd[lane] = x + px / ppd;
+      let lane = laneEnd.findIndex(e => e <= pos(x)); if (lane < 0) lane = laneEnd.length;
+      laneEnd[lane] = pos(x) + px / ppd;
       placed.push({ ...r, lines, lane: lane + 1, x, px });
     }
     if (laneEnd.length <= MAX_LANES) break;
@@ -384,14 +426,14 @@ function layoutLabels(rs, ppd, showDate) {
 }
 
 // Bands: label at the band's start, or at the left edge of the view if it started earlier.
-function layoutBands(rs, ppd, viewStart) {
+function layoutBands(rs, ppd, viewStart, pos = x => x) {
   const placed = [], laneEnd = [];
   for (const r of sortRows(rs)) {
     const x0 = num(r.date), x1 = num(r.end), labelX = Math.min(Math.max(x0, viewStart), x1);
     const name = (r.key ? KEY_MARK : "") + (r.class || "Event");
     const px = textW(name, true) + textW("  " + r.description, false) + 16;
-    let lane = laneEnd.findIndex(e => e <= x0); if (lane < 0) lane = laneEnd.length;
-    laneEnd[lane] = Math.max(x1, labelX + px / ppd);
+    let lane = laneEnd.findIndex(e => e <= pos(x0)); if (lane < 0) lane = laneEnd.length;
+    laneEnd[lane] = Math.max(pos(x1), pos(labelX) + px / ppd);
     placed.push({ ...r, lane: lane + 1, x0, x1, labelX, name });
   }
   return placed;
@@ -405,11 +447,14 @@ function draw() {
   const W = Math.max($("tl").clientWidth, 300), title = $("title").value.trim();
   const L = 30, R = 30, pw = W - L - R, ppd = pw / view.span, daily = ppd >= DAILY_PX;
   const [unit, step] = tickStep(ppd), hourly = unit === "hour";
-  const lo = view.start, hi = view.start + view.span, X = d => L + (d - lo) * ppd;
+  const kept = shownRows(), drawable = kept.filter(r => r.class || r.description);
+  const br = $("compress").checked ? findBreaks(drawable, view.span, ppd, expanded) : [], P = x => squash(br, x);
+  const inBreak = d => br.some(b => d > b.lo && d < b.hi);
+  const lo = view.start, hi = unsquash(br, P(lo) + view.span), X = d => L + (P(d) - P(lo)) * ppd;
   const colours = classColours(rows), col = c => colours[c] || OTHER;   // from all rows, so filtering never repaints a class
-  const kept = shownRows(), shown = inSpan(kept.filter(r => r.class || r.description), lo, hi);
-  const labels = layoutLabels(shown.filter(r => !r.end), ppd, !daily);
-  const bands = layoutBands(shown.filter(r => r.end), ppd, lo);
+  const shown = inSpan(drawable, lo, hi);
+  const labels = layoutLabels(shown.filter(r => !r.end), ppd, !daily, P);
+  const bands = layoutBands(shown.filter(r => r.end), ppd, lo, P);
 
   // legend rows (single-date classes), wrapped to the width
   const legend = [...new Set(labels.map(p => p.class || "Event"))].sort();
@@ -440,16 +485,18 @@ function draw() {
   if (ppd >= 8) for (let d = Math.floor(lo) - 2; d <= Math.ceil(hi); d++) {
     if (new Date(d * DAY).getUTCDay() !== 6) continue;
     const a = Math.max(X(d - shift), L), b = Math.min(X(d + 2 - shift), W - R);
-    if (b > a) o.push(`<rect x="${a}" y="${top}" width="${b - a}" height="${yAxis - top}" fill="#f6f5f1"/>`);
+    if (b > a + 0.5) o.push(`<rect x="${a}" y="${top}" width="${b - a}" height="${yAxis - top}" fill="#f6f5f1"/>`);
   }
 
   // ticks and grid: one entry per tick = [day number, line 1, line 2, strong grid line?]
   const ticks = []; let first = true;
   if (hourly) for (let k = Math.ceil(lo * 24 / step - 1e-6); k * step / 24 <= hi + 1e-6; k++) {
     const h = ((k * step) % 24 + 24) % 24, d = k * step / 24;
+    if (inBreak(d)) continue;
     ticks.push([d, `${pad2(h)}:00`, first || h === 0 ? fmtWhen(iso(d + 1e-6), true) : "", h === 0]); first = false;
   }
   else for (let d = Math.ceil(lo - 1e-6); d <= hi + 1e-6; d++) {
+    if (inBreak(d)) { first = true; continue; }   // the first tick after a break names its month/year again
     const t = new Date(d * DAY), dom = t.getUTCDate(), dow = t.getUTCDay(), mo = t.getUTCMonth(), yr = t.getUTCFullYear();
     let l1 = null, l2 = "";
     if (unit === "day") { l1 = (ppd >= 48 ? DOW[dow] + " " : "") + pad2(dom); if (first || dom === 1) l2 = `${MON[mo]} ${yr}`; }
@@ -466,7 +513,7 @@ function draw() {
 
   // today: on today's tick at day zoom, at the current time with hour ticks
   const now = hourly ? nowNum() : todayNum();
-  if (now >= lo && now <= hi) o.push(`<line x1="${X(now)}" x2="${X(now)}" y1="${top}" y2="${yAxis}" stroke="${MUTED}" stroke-dasharray="4 3"/>`,
+  if (now >= lo && now <= hi && !inBreak(now)) o.push(`<line x1="${X(now)}" x2="${X(now)}" y1="${top}" y2="${yAxis}" stroke="${MUTED}" stroke-dasharray="4 3"/>`,
     text(X(now), top - 4, "Today", `text-anchor="middle" font-size="11" style="font-size:11px;fill:${MUTED}" fill="${MUTED}"`));
 
   // bands (their own strip above the single-date labels)
@@ -488,6 +535,18 @@ function draw() {
     p.lines.forEach((s, i) => o.push(text(x + 7, y + 12 + i * LINE_PX, esc(s) + tip, i === 0 ? 'font-weight="600"' : "")));
   }
   o.push(`<line x1="${L}" x2="${W - R}" y1="${yAxis}" y2="${yAxis}" stroke="${MUTED}"/>`);
+  // compressed gaps: dotted line, a zig-zag cut in the axis and a label with the quiet time; click it to open the gap.
+  // Drawn into the picture itself, so a PNG never hides a compression.
+  const cuts = br.filter(b => b.lo > lo && b.lo < hi);
+  for (const b of cuts) {
+    const x = X(b.lo), label = `(${breakText(b.gap)})  ×`, w = textW(label, true) + 10;
+    o.push(`<line x1="${x}" x2="${x}" y1="${top}" y2="${yAxis}" stroke="${MUTED}" stroke-dasharray="1 3"/>`,
+      `<rect x="${x - 8}" y="${yAxis - 3}" width="16" height="6" fill="#fff"/>`,
+      `<path d="M${x - 8} ${yAxis}L${x - 5} ${yAxis - 5}L${x - 1} ${yAxis + 5}L${x + 3} ${yAxis - 5}L${x + 7} ${yAxis + 5}L${x + 8} ${yAxis}" fill="none" stroke="${INK}" stroke-width="1.5"/>`,
+      `<g data-break="${esc(b.key)}" style="cursor:pointer"><title>${esc(breakText(b.gap))} with no events compressed - click to expand</title>`
+      + `<rect x="${x - w / 2}" y="${yAxis - 22}" width="${w}" height="16" rx="3" fill="#fff" stroke="${MUTED}"/>`
+      + text(x, yAxis - 10, esc(label), 'text-anchor="middle" font-weight="600" xml:space="preserve"') + "</g>");
+  }
   for (const p of pts.filter(p => !p.key).concat(pts.filter(p => p.key))) {   // marker on the axis: a dot, or a larger diamond for a key event (drawn last, so on top)
     const x = X(p.x), c = `fill="${col(p.class)}" stroke="#fff" stroke-width="2"`;
     o.push(p.key ? `<path d="M${x} ${yAxis - 7}L${x + 7} ${yAxis}L${x} ${yAxis + 7}L${x - 7} ${yAxis}Z" ${c}/>` : `<circle cx="${x}" cy="${yAxis}" r="4" ${c}/>`);
@@ -496,10 +555,11 @@ function draw() {
   const svg = $("svg");
   svg.setAttribute("width", W); svg.setAttribute("height", H); svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   svg.innerHTML = o.join("");
-  svg._ppd = ppd; svg._left = L;
+  svg._ppd = ppd; svg._left = L; svg._breaks = br;
   const visible = withGaps(inSpan(kept, lo, hi));
   $("caption").textContent = `Showing ${fmtWhen(hourly ? numWhen(lo) : iso(lo))} – ${fmtWhen(hourly ? numWhen(hi) : iso(hi))} · ${visible.length} of ${rows.length} events`
-    + (kept.length < rows.length ? ` · filter on (${rows.length - kept.length} hidden)` : "");
+    + (kept.length < rows.length ? ` · filter on (${rows.length - kept.length} hidden)` : "")
+    + (cuts.length ? ` · ${cuts.length} gap(s) compressed` : "");
   return visible;
 }
 
@@ -536,18 +596,21 @@ function render() {   // the only place that redraws: timeline and table can nev
 }
 
 // ------------------------------------------------------------- controls ----
-function setView(start, span) {   // keep the span between one day and six months, same centre
+// Moves are worked out in axis positions, so with compressed gaps one step is still half a screen.
+const P = x => squash($("svg")._breaks || [], x), A = d => unsquash($("svg")._breaks || [], d);
+function setView(startPos, span) {   // keep the span between one day and six months, same centre
   const clamped = Math.min(Math.max(span, MIN_DAYS), MAX_DAYS);
-  view = { start: start + (span - clamped) / 2, span: clamped };
+  view = { start: A(startPos + (span - clamped) / 2), span: clamped };
 }
-$("prev").onclick = () => { setView(view.start - view.span / 2, view.span); render(); };
-$("next").onclick = () => { setView(view.start + view.span / 2, view.span); render(); };
-$("today").onclick = () => { setView(nowNum() - view.span / 2, view.span); render(); };
-$("first").onclick = () => { if (rows.length) { setView(num(rows[0].date) - view.span / 31, view.span); render(); } };
-$("fit").onclick = () => { const f = fitSpan(shownRows()); if (f) { setView(f[0], f[1]); render(); } };
+$("prev").onclick = () => { setView(P(view.start) - view.span / 2, view.span); render(); };
+$("next").onclick = () => { setView(P(view.start) + view.span / 2, view.span); render(); };
+$("today").onclick = () => { setView(P(nowNum()) - view.span / 2, view.span); render(); };
+$("first").onclick = () => { if (rows.length) { setView(P(num(rows[0].date)) - view.span / 31, view.span); render(); } };
+$("fit").onclick = () => { const f = fitSpan(shownRows()); if (f) { setView(P(f[0]), f[1]); render(); } };
 document.querySelectorAll("[data-zoom]").forEach(b => b.onclick = () => {
-  const span = +b.dataset.zoom; setView(view.start + view.span / 2 - span / 2, span); render(); });
+  const span = +b.dataset.zoom; setView(P(view.start) + view.span / 2 - span / 2, span); render(); });
 ["title", "showTl", "showTb", "showDt"].forEach(id => $(id).addEventListener("input", render));
+$("compress").addEventListener("input", () => { expanded = []; render(); });   // toggling closes every opened gap again
 
 // filters
 $("search").addEventListener("input", e => { filt.text = e.target.value; save(); drawTable(draw()); });   // no full render: keeps the cursor in the box
@@ -560,18 +623,22 @@ $("chips").onclick = e => {
 // drag to scroll; wheel zooms at the pointer; shift+wheel or sideways wheel scrolls
 const svg = $("svg"); let drag = null, queued = false;
 const redrawSoon = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; draw(); }); } };
-svg.addEventListener("pointerdown", e => { drag = { x: e.clientX, start: view.start }; svg.setPointerCapture(e.pointerId); svg.style.cursor = "grabbing"; });
-svg.addEventListener("pointermove", e => { if (drag) { view.start = drag.start - (e.clientX - drag.x) / svg._ppd; redrawSoon(); } });
+svg.addEventListener("pointerdown", e => {
+  const cut = e.target.closest && e.target.closest("[data-break]");
+  if (cut) { expanded = expanded.concat([cut.dataset.break]); render(); return; }   // open this gap only
+  drag = { x: e.clientX, start: P(view.start) }; svg.setPointerCapture(e.pointerId); svg.style.cursor = "grabbing"; });
+svg.addEventListener("pointermove", e => { if (drag) { view.start = A(drag.start - (e.clientX - drag.x) / svg._ppd); redrawSoon(); } });
 const endDrag = () => { if (drag) { drag = null; svg.style.cursor = "grab"; render(); } };
 svg.addEventListener("pointerup", endDrag); svg.addEventListener("pointercancel", endDrag);
 let wheelTimer;
 svg.addEventListener("wheel", e => {
   e.preventDefault();
-  if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) view.start += (e.deltaX || e.deltaY) / svg._ppd;
+  const start = P(view.start);
+  if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) view.start = A(start + (e.deltaX || e.deltaY) / svg._ppd);
   else {
-    const at = view.start + (e.clientX - svg.getBoundingClientRect().left - svg._left) / svg._ppd;
+    const at = start + (e.clientX - svg.getBoundingClientRect().left - svg._left) / svg._ppd;
     const span = Math.min(Math.max(view.span * Math.exp(e.deltaY * 0.0015), MIN_DAYS), MAX_DAYS);
-    view = { start: at - (at - view.start) * span / view.span, span };
+    view = { start: A(at - (at - start) * span / view.span), span };
   }
   redrawSoon(); clearTimeout(wheelTimer); wheelTimer = setTimeout(render, 200);
 }, { passive: false });

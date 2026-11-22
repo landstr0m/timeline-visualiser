@@ -205,3 +205,45 @@ def test_figure_has_today_line_key_marker_and_stable_colours():
     fig = build_figure(rows, datetime(2025, 3, 10), datetime(2025, 3, 11))
     assert "diamond" in fig.data[0].marker.symbol and fig.layout.xaxis.dtick == 2 * 3600000
     assert not any(a.text == "Today" for a in fig.layout.annotations)
+
+
+# ------------------------------------------------------------ compressed gaps ----
+def _rows(*specs):
+    return [tl.make_row(d, c, "x", end=e) for d, e, c in specs]
+
+
+def test_breaks_cut_long_gaps_only_between_events():
+    rows = _rows(("2026-01-01", None, "A"), ("2026-01-16", None, "A"), ("2026-01-25", None, "A"))
+    breaks = tl.find_breaks(rows, 30, 30)
+    # 15 days and 9 days are both at least 30% of a 30-day view; 5% (1.5 days) stays either side
+    assert [b["gap"] for b in breaks] == [15, 9]
+    first = tl.when_num("2026-01-01")
+    assert breaks[0]["lo"] == pytest.approx(first + 1.5) and breaks[0]["hi"] == pytest.approx(first + 13.5)
+    assert breaks[0]["key"] == "2026-01-01|2026-01-16"
+    assert tl.find_breaks(rows, 60, 30) == []  # at 2 months neither gap is long enough
+    assert len(tl.find_breaks(rows, 30, 30, expanded=["2026-01-01|2026-01-16"])) == 1
+
+
+def test_band_through_a_gap_is_compressed_and_keeps_label_room():
+    rows = _rows(("2026-01-01", "2026-03-01", "Phase"))
+    (b,) = tl.find_breaks(rows, 30, 30)  # a band's start and end are the activity
+    assert b["gap"] == 59
+    room = (len("Phase") + len("x") + 2) * tl.CHAR_PX + 16  # px; 30 px per day
+    assert b["lo"] == pytest.approx(tl.when_num("2026-01-01") + max(1.5, room / 30))
+
+
+def test_squash_and_unsquash_are_inverse():
+    breaks = [{"lo": 10, "hi": 20}, {"lo": 30, "hi": 40}]
+    assert [tl.squash(breaks, x) for x in (5, 10, 15, 20, 25, 45)] == [5, 10, 10, 10, 15, 25]
+    assert [tl.unsquash(breaks, d) for d in (5, 10, 15, 25)] == [5, 10, 25, 45]
+
+
+def test_break_text():
+    assert [tl.break_text(d) for d in (0.3, 1, 15, 59.6, 92, 800)] == [
+        "7 h",
+        "1 day",
+        "15 days",
+        "60 days",
+        "3 months",
+        "2.2 years",
+    ]

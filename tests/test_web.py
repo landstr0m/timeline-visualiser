@@ -50,10 +50,14 @@ const out = cases.map(t => {
     gaps: withGaps(rows).map(r => r.gap), tips: rows.map(tipLines), heads: rows.map(r => labelHead(r, true)),
     timelines: timelines(rows), found: strip(filterRows(rows, ["Results"], "", "a")),
     fit: fit && [fit[0] - lo, fit[1]], seen: strip(inSpan(rows, lo + 0.5, lo + 1.5)),
-    back: rows.map(r => numWhen(num(r.date))) };
+    back: rows.map(r => numWhen(num(r.date))),
+    breaks: [7, 30].map(span => findBreaks(rows, span, 40, []).map(b => [b.key, b.lo - lo, b.hi - lo, b.gap])) };
 });
 const ticks = [5, 11, 22, 34, 87, 88, 150, 351, 1040, 1100].map(tickStep);
-process.stdout.write(JSON.stringify({ out, ticks, palette: PALETTE, min: MIN_DAYS, max: MAX_DAYS, sample: SAMPLE,
+const cut = [{ lo: 10, hi: 20 }, { lo: 30, hi: 40 }];
+const squashed = [[5, 10, 15, 20, 25, 45].map(x => squash(cut, x)), [5, 10, 15, 25].map(d => unsquash(cut, d))];
+const labels = [0.3, 1, 15, 59.6, 92, 800, 1100].map(breakText);
+process.stdout.write(JSON.stringify({ out, ticks, squashed, labels, shares: [GAP_SHARE, PAD_SHARE, CHAR_PX], palette: PALETTE, min: MIN_DAYS, max: MAX_DAYS, sample: SAMPLE,
   aliases: ALIASES, levels: LEVELS, columns: [COLUMNS, EXTRAS, EXTRA_FIELDS] }));
 """
 
@@ -78,7 +82,17 @@ def test_constants_match(web):
     assert web["aliases"] == tl.ALIASES
     assert web["levels"] == [list(level) for level in tl.LEVELS]
     assert web["columns"] == [tl.COLUMNS, tl.EXTRAS, tl.EXTRA_FIELDS]
+    assert web["shares"] == [tl.GAP_SHARE, tl.PAD_SHARE, tl.CHAR_PX]
     assert web["sample"] == SAMPLE  # the sample built into the page is the sample file
+
+
+def test_gap_compression_matches(web):
+    cut = [{"lo": 10, "hi": 20}, {"lo": 30, "hi": 40}]
+    assert web["squashed"] == [
+        [tl.squash(cut, x) for x in [5, 10, 15, 20, 25, 45]],
+        [tl.unsquash(cut, d) for d in [5, 10, 15, 25]],
+    ]
+    assert web["labels"] == [tl.break_text(d) for d in [0.3, 1, 15, 59.6, 92, 800, 1100]]
 
 
 def test_tick_steps_match(web):
@@ -103,6 +117,13 @@ def test_web_matches_python(web, i):
     assert got["timelines"] == tl.timelines(rows)
     assert got["found"] == strip(tl.filter_rows(rows, ["Results"], "", "a"))
     assert got["seen"] == strip(tl.in_span(rows, lo + 0.5, lo + 1.5))
+    want = [
+        [[b["key"], b["lo"] - lo, b["hi"] - lo, b["gap"]] for b in tl.find_breaks(rows, span, 40)] for span in (7, 30)
+    ]
+    keys = [[x[0] for x in w] for w in got["breaks"]]
+    assert keys == [[x[0] for x in w] for w in want]
+    numbers = [n for w in got["breaks"] for x in w for n in x[1:]]
+    assert numbers == pytest.approx([n for w in want for x in w for n in x[1:]])
     assert got["back"] == [tl.num_when(tl.when_num(r["date"])) for r in rows]
     fit = tl.fit_span(rows)
     assert got["fit"] == pytest.approx([fit[0] - lo, fit[1]])
